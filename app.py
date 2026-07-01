@@ -1,25 +1,6 @@
 """
-Monthly KPI Dashboard — Jubilant FoodWorks style Enterprise Edition
-=====================================================================
-Single-file Streamlit application.
-
-- Loads an Excel workbook directly from a GitHub RAW URL (no DB, no mock data).
-- Auto-detects date columns, numeric (KPI) columns, and category-type columns.
-- Dynamically builds KPI cards, trend charts, and category breakdowns based on
-  whatever structure the workbook actually has — no fixed schema assumptions.
-- Automatically re-reads the file so that when it's replaced on GitHub with the
-  same filename, the dashboard picks up the new content (short cache TTL +
-  ETag/Last-Modified based cache-busting + manual "Refresh Data" button).
-- Handles missing/partial data gracefully; never crashes on missing columns.
-
-Deployment requirements (requirements.txt alongside this file):
-    streamlit
-    pandas
-    openpyxl
-    requests
-    plotly
-
-Run:  streamlit run app.py
+Enterprise KPI Analytics Dashboard — Single-file Streamlit application.
+Loads data live from a GitHub RAW Excel file. No mock data, no hardcoded columns.
 """
 
 import re
@@ -34,174 +15,146 @@ import streamlit as st
 import plotly.graph_objects as go
 
 # =============================================================================
-# 1. CONFIGURATION
+# CONFIG
 # =============================================================================
-GITHUB_RAW_URL_DEFAULT = (
+GITHUB_RAW_URL = (
     "https://raw.githubusercontent.com/AayuGo1/energy_dashboard/main/"
     "Monthly%20KPI%20Summary%20Sheet_April_GNSC.xlsx"
 )
 COMPANY_NAME = "GNSC"
-PARENT_BRAND = "Jubilant FoodWorks"
-CACHE_TTL_SECONDS = 300  # data auto-revalidates every 5 minutes
+CACHE_TTL_SECONDS = 300
 
-PALETTE = {
-    "bg": "#F5F7FA",
-    "surface": "#FFFFFF",
-    "surface-alt": "#F0F2F6",
-    "border": "#E5E7EB",
-    "text-hi": "#1F2937",
-    "text-mid": "#4B5563",
-    "text-lo": "#9CA3AF",
-    "primary": "#003E7E",
-    "primary-2": "#0A5AA8",
-    "accent": "#D71920",
-    "success": "#16A34A",
-    "warning": "#F59E0B",
-    "danger": "#DC2626",
-    "shadow": "0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06)",
+PAL = {
+    "bg": "#F5F7FA", "surface": "#FFFFFF", "surface-alt": "#F0F2F6",
+    "border": "#E5E7EB", "text-hi": "#1F2937", "text-mid": "#4B5563",
+    "text-lo": "#9CA3AF", "primary": "#0B5FFF", "primary-2": "#003E8C",
+    "success": "#16A34A", "warning": "#B98900",
+    "shadow": "0 1px 3px rgba(16,24,40,0.06)",
     "shadow-hover": "0 8px 20px rgba(16,24,40,0.10)",
 }
 
-st.set_page_config(
-    page_title=f"{COMPANY_NAME} | Monthly KPI Dashboard",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title=f"{COMPANY_NAME} | Executive KPI Dashboard",
+                    page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
 
 # =============================================================================
-# 2. THEME / CSS
+# STYLE
 # =============================================================================
 def inject_css():
-    p = PALETTE
-    st.markdown(
-        f"""
-        <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    p = PAL
+    st.markdown(f"""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    :root {{
+        --bg:{p['bg']}; --surface:{p['surface']}; --surface-alt:{p['surface-alt']};
+        --border:{p['border']}; --text-hi:{p['text-hi']}; --text-mid:{p['text-mid']};
+        --text-lo:{p['text-lo']}; --primary:{p['primary']}; --primary-2:{p['primary-2']};
+        --success:{p['success']}; --warning:{p['warning']};
+        --shadow:{p['shadow']}; --shadow-hover:{p['shadow-hover']};
+    }}
+    html, body, [class*="css"] {{ font-family:'Inter',sans-serif; }}
+    #MainMenu, footer {{visibility:hidden;}}
+    header[data-testid="stHeader"] {{background:transparent;}}
+    .stApp {{ background:var(--bg); color:var(--text-hi); }}
+    .main .block-container {{ padding-top:1.1rem; }}
 
-        :root {{
-            --bg:{p['bg']}; --surface:{p['surface']}; --surface-alt:{p['surface-alt']};
-            --border:{p['border']}; --text-hi:{p['text-hi']}; --text-mid:{p['text-mid']};
-            --text-lo:{p['text-lo']}; --primary:{p['primary']}; --primary-2:{p['primary-2']};
-            --accent:{p['accent']}; --success:{p['success']}; --warning:{p['warning']};
-            --danger:{p['danger']}; --shadow:{p['shadow']}; --shadow-hover:{p['shadow-hover']};
-        }}
+    section[data-testid="stSidebar"] {{ background:var(--surface); border-right:1px solid var(--border); }}
+    section[data-testid="stSidebar"] * {{ color:var(--text-mid) !important; }}
 
-        html, body, [class*="css"] {{ font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif; }}
-        #MainMenu {{visibility:hidden;}}
-        footer {{visibility:hidden;}}
-        header[data-testid="stHeader"] {{background:transparent;}}
-        .stApp {{ background:var(--bg); color:var(--text-hi); }}
+    .sb-brand {{ display:flex; align-items:center; gap:10px; padding:6px 2px 16px 2px;
+        border-bottom:1px solid var(--border); margin-bottom:14px; }}
+    .sb-logo-chip {{ width:38px; height:38px; border-radius:10px; flex-shrink:0;
+        background:linear-gradient(135deg, var(--primary), var(--primary-2));
+        display:flex; align-items:center; justify-content:center; color:#fff !important;
+        font-weight:800; font-size:13px; }}
+    .sb-brand-name {{ font-size:15px; font-weight:800; color:var(--text-hi) !important; }}
+    .sb-brand-sub {{ font-size:10.5px; color:var(--text-lo) !important; letter-spacing:.5px;
+        text-transform:uppercase; font-weight:700; }}
+    .sb-section-title {{ font-size:10.5px; text-transform:uppercase; letter-spacing:1.2px;
+        color:var(--text-lo) !important; font-weight:800; margin:18px 0 8px 2px; }}
 
-        .main .block-container {{ animation: fadeIn .45s ease both; padding-top:1.1rem; }}
-        @keyframes fadeIn {{ from{{opacity:0; transform:translateY(6px);}} to{{opacity:1; transform:translateY(0);}} }}
+    .status-card {{ background:var(--surface-alt); border:1px solid var(--border); border-radius:10px;
+        padding:10px 12px; margin-bottom:6px; }}
+    .status-row {{ display:flex; align-items:center; gap:7px; font-size:12.5px; font-weight:700;
+        color:var(--text-hi) !important; }}
+    .status-dot {{ height:8px; width:8px; border-radius:50%; background:var(--success);
+        display:inline-block; animation:pulseDot 1.8s infinite; }}
+    @keyframes pulseDot {{ 0%{{box-shadow:0 0 0 0 rgba(22,163,74,.5);}} 70%{{box-shadow:0 0 0 6px rgba(22,163,74,0);}}
+        100%{{box-shadow:0 0 0 0 rgba(22,163,74,0);}} }}
+    .status-sub {{ font-size:10.5px; color:var(--text-lo) !important; margin-top:4px; }}
 
-        section[data-testid="stSidebar"] {{ background:var(--surface); border-right:1px solid var(--border); }}
-        section[data-testid="stSidebar"] * {{ color:var(--text-mid) !important; }}
+    div.stButton > button {{ background:var(--primary); color:#fff !important; border:none;
+        border-radius:8px; padding:9px 12px; font-weight:700; width:100%; box-shadow:var(--shadow); }}
+    div.stButton > button:hover {{ background:var(--primary-2); }}
 
-        .sb-brand {{ display:flex; align-items:center; gap:10px; padding:6px 2px 16px 2px;
-            border-bottom:1px solid var(--border); margin-bottom:14px; }}
-        .sb-logo-chip {{ width:38px; height:38px; border-radius:10px; flex-shrink:0;
-            background:linear-gradient(135deg, var(--primary), var(--primary-2));
-            display:flex; align-items:center; justify-content:center; color:#fff !important;
-            font-weight:800; font-size:14px; }}
-        .sb-brand-name {{ font-size:15px; font-weight:800; color:var(--text-hi) !important; line-height:1.15; }}
-        .sb-brand-sub {{ font-size:10.5px; color:var(--text-lo) !important; letter-spacing:.5px;
-            text-transform:uppercase; font-weight:700; }}
-        .sb-section-title {{ font-size:10.5px; text-transform:uppercase; letter-spacing:1.2px;
-            color:var(--text-lo) !important; font-weight:800; margin:18px 0 8px 2px; }}
-        .sb-footnote {{ font-size:11px; line-height:1.5; color:var(--text-lo) !important;
-            background:var(--surface-alt); border:1px solid var(--border); border-radius:8px;
-            padding:9px 11px; margin-top:4px; }}
+    .app-header {{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+        padding:18px 24px; margin-bottom:20px; background:var(--surface); border-radius:14px;
+        border:1px solid var(--border); box-shadow:var(--shadow); flex-wrap:wrap; }}
+    .app-header-left {{ display:flex; align-items:center; gap:14px; }}
+    .app-header-icon {{ width:46px; height:46px; border-radius:12px; display:flex; align-items:center;
+        justify-content:center; background:linear-gradient(135deg, var(--primary), var(--primary-2));
+        color:#fff; font-size:20px; flex-shrink:0; }}
+    .app-header h1 {{ margin:0; font-size:21px; font-weight:800; color:var(--text-hi); letter-spacing:-.2px; }}
+    .app-header p {{ margin:2px 0 0 0; font-size:12.5px; color:var(--text-mid); font-weight:500; }}
+    .header-badge-row {{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }}
+    .header-badge {{ background:var(--surface-alt); border:1px solid var(--border); color:var(--text-mid);
+        padding:5px 12px; border-radius:20px; font-size:11.5px; font-weight:700; white-space:nowrap; }}
+    .header-badge.live {{ background:rgba(22,163,74,0.10); border-color:rgba(22,163,74,0.3); color:var(--success); }}
 
-        div.stButton > button {{ background:var(--primary); color:#fff !important; border:none;
-            border-radius:8px; padding:9px 12px; font-weight:700; width:100%; box-shadow:var(--shadow);
-            transition:background .15s ease, transform .15s ease; }}
-        div.stButton > button:hover {{ background:var(--primary-2); transform:translateY(-1px); }}
+    .section-label {{ font-size:12.5px; text-transform:uppercase; letter-spacing:1.2px; color:var(--primary);
+        font-weight:800; margin:26px 0 14px 2px; display:flex; align-items:center; gap:10px; }}
+    .section-label::after {{ content:""; flex:1; height:1px; background:var(--border); }}
 
-        .app-header {{ display:flex; align-items:center; justify-content:space-between; gap:16px;
-            padding:18px 24px; margin-bottom:18px; background:var(--surface); border-radius:14px;
-            border:1px solid var(--border); box-shadow:var(--shadow); flex-wrap:wrap; }}
-        .app-header-left {{ display:flex; align-items:center; gap:14px; }}
-        .app-header-icon {{ width:46px; height:46px; border-radius:12px; display:flex; align-items:center;
-            justify-content:center; background:linear-gradient(135deg, var(--primary), var(--primary-2));
-            color:#fff; font-size:20px; flex-shrink:0; }}
-        .app-header h1 {{ margin:0; font-size:22px; font-weight:800; color:var(--text-hi); letter-spacing:-.2px; }}
-        .app-header p {{ margin:2px 0 0 0; font-size:12.5px; color:var(--text-mid); font-weight:500; }}
-        .app-header-right {{ display:flex; flex-direction:column; align-items:flex-end; gap:7px; }}
-        .header-badge-row {{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }}
-        .header-badge {{ background:var(--surface-alt); border:1px solid var(--border); color:var(--text-mid);
-            padding:5px 12px; border-radius:20px; font-size:11.5px; font-weight:700; white-space:nowrap; }}
-        .header-badge.live {{ background:rgba(22,163,74,0.10); border-color:rgba(22,163,74,0.35); color:var(--success); }}
-        .header-badge.live .dot {{ display:inline-block; width:6px; height:6px; border-radius:50%;
-            background:var(--success); margin-right:6px; animation:pulseDot 1.8s infinite; }}
-        @keyframes pulseDot {{ 0%{{box-shadow:0 0 0 0 rgba(22,163,74,.55);}} 70%{{box-shadow:0 0 0 6px rgba(22,163,74,0);}}
-            100%{{box-shadow:0 0 0 0 rgba(22,163,74,0);}} }}
-        .header-meta {{ font-size:10.5px; color:var(--text-lo); font-weight:600; }}
+    .kpi-card {{ background:var(--surface); border:1px solid var(--border); border-radius:12px;
+        padding:16px 16px 14px 16px; box-shadow:var(--shadow); height:158px;
+        display:flex; flex-direction:column; justify-content:space-between;
+        border-top:3px solid var(--primary); transition:transform .15s ease, box-shadow .15s ease; }}
+    .kpi-card:hover {{ transform:translateY(-2px); box-shadow:var(--shadow-hover); }}
+    .kpi-top-row {{ display:flex; align-items:flex-start; justify-content:space-between; }}
+    .kpi-icon-badge {{ width:32px; height:32px; border-radius:8px; display:flex; align-items:center;
+        justify-content:center; font-size:15px; background:var(--surface-alt); border:1px solid var(--border); }}
+    .kpi-trend-pill {{ display:flex; align-items:center; gap:4px; font-size:10.8px; font-weight:800;
+        padding:3px 9px; border-radius:20px; white-space:nowrap; }}
+    .kpi-trend-pill.good {{ background:rgba(22,163,74,0.10); color:var(--success); border:1px solid rgba(22,163,74,0.3); }}
+    .kpi-trend-pill.bad  {{ background:rgba(185,137,0,0.12); color:var(--warning); border:1px solid rgba(185,137,0,0.3); }}
+    .kpi-trend-pill.flat {{ background:var(--surface-alt); color:var(--text-mid); border:1px solid var(--border); }}
+    .kpi-value {{ font-size:24px; font-weight:800; color:var(--text-hi); line-height:1.1; font-variant-numeric:tabular-nums; }}
+    .kpi-label {{ margin-top:3px; font-size:11.2px; font-weight:700; color:var(--text-mid);
+        text-transform:uppercase; letter-spacing:.3px; }}
+    .kpi-compare {{ margin-top:2px; font-size:10.3px; color:var(--text-lo); font-weight:600; }}
 
-        .section-label {{ font-size:12px; text-transform:uppercase; letter-spacing:1.2px; color:var(--primary);
-            font-weight:800; margin:22px 0 12px 2px; display:flex; align-items:center; gap:10px; }}
-        .section-label::after {{ content:""; flex:1; height:1px; background:var(--border); }}
+    .exec-card {{ background:var(--surface); border:1px solid var(--border); border-radius:12px;
+        padding:16px 18px; box-shadow:var(--shadow); margin-bottom:18px; }}
 
-        .kpi-card {{ background:var(--surface); border:1px solid var(--border); border-radius:12px;
-            padding:16px 16px 14px 16px; box-shadow:var(--shadow); height:170px;
-            display:flex; flex-direction:column; justify-content:space-between;
-            border-top:3px solid var(--card-accent, var(--primary));
-            transition:transform .18s ease, box-shadow .18s ease; animation:fadeIn .4s ease both; }}
-        .kpi-card:hover {{ transform:translateY(-3px); box-shadow:var(--shadow-hover); }}
-        .kpi-top-row {{ display:flex; align-items:flex-start; justify-content:space-between; }}
-        .kpi-icon-badge {{ width:34px; height:34px; border-radius:9px; display:flex; align-items:center;
-            justify-content:center; font-size:16px; background:var(--surface-alt); border:1px solid var(--border); }}
-        .kpi-trend-pill {{ display:flex; align-items:center; gap:4px; font-size:11px; font-weight:800;
-            padding:3px 9px; border-radius:20px; white-space:nowrap; }}
-        .kpi-trend-pill.good {{ background:rgba(22,163,74,0.10); color:var(--success); border:1px solid rgba(22,163,74,0.3); }}
-        .kpi-trend-pill.bad  {{ background:rgba(220,38,38,0.10); color:var(--danger); border:1px solid rgba(220,38,38,0.3); }}
-        .kpi-trend-pill.flat {{ background:var(--surface-alt); color:var(--text-mid); border:1px solid var(--border); }}
-        .kpi-value {{ font-size:26px; font-weight:800; color:var(--text-hi); line-height:1.1; font-variant-numeric:tabular-nums; }}
-        .kpi-label {{ margin-top:3px; font-size:11.5px; font-weight:700; color:var(--text-mid);
-            text-transform:uppercase; letter-spacing:.3px; }}
-        .kpi-compare {{ margin-top:2px; font-size:10.5px; color:var(--text-lo); font-weight:600; }}
+    .stat-mini {{ display:flex; align-items:center; justify-content:space-between; gap:8px;
+        padding:10px 12px; border-radius:8px; background:var(--surface-alt);
+        border:1px solid var(--border); margin-bottom:7px; }}
+    .stat-mini .stat-label {{ font-size:11.5px; font-weight:700; color:var(--text-mid); }}
+    .stat-mini .stat-value {{ font-size:14.5px; font-weight:800; color:var(--text-hi); font-variant-numeric:tabular-nums; }}
 
-        .exec-card {{ background:var(--surface); border:1px solid var(--border); border-radius:12px;
-            padding:16px 18px; box-shadow:var(--shadow); margin-bottom:18px;
-            transition:box-shadow .18s ease; animation:fadeIn .45s ease both; }}
-        .exec-card:hover {{ box-shadow:var(--shadow-hover); }}
+    .skel-card {{ height:158px; border-radius:12px; border:1px solid var(--border);
+        background:linear-gradient(100deg, var(--surface-alt) 30%, var(--border) 50%, var(--surface-alt) 70%);
+        background-size:300% 100%; animation:shimmer 1.4s ease-in-out infinite; }}
+    @keyframes shimmer {{ 0%{{background-position:200% 0;}} 100%{{background-position:-200% 0;}} }}
 
-        .stat-mini {{ display:flex; align-items:center; justify-content:space-between; gap:8px;
-            padding:10px 12px; border-radius:8px; background:var(--surface-alt);
-            border:1px solid var(--border); margin-bottom:7px; }}
-        .stat-mini .stat-label {{ font-size:11.5px; font-weight:700; color:var(--text-mid); }}
-        .stat-mini .stat-value {{ font-size:15px; font-weight:800; color:var(--text-hi); font-variant-numeric:tabular-nums; }}
-
-        .skel-card {{ height:170px; border-radius:12px; border:1px solid var(--border);
-            background:linear-gradient(100deg, var(--surface-alt) 30%, var(--border) 50%, var(--surface-alt) 70%);
-            background-size:300% 100%; animation:shimmer 1.5s ease-in-out infinite; }}
-        @keyframes shimmer {{ 0%{{background-position:200% 0;}} 100%{{background-position:-200% 0;}} }}
-
-        @media (max-width:640px) {{
-            .app-header {{ flex-direction:column; align-items:flex-start; }}
-            .app-header-right {{ align-items:flex-start; }}
-            .kpi-card {{ height:auto; }}
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    @media (max-width:640px) {{
+        .app-header {{ flex-direction:column; align-items:flex-start; }}
+        .kpi-card {{ height:auto; }}
+    }}
+    </style>
+    """, unsafe_allow_html=True)
 
 
 inject_css()
-PAL = PALETTE
 PLOTLY_BG = "rgba(0,0,0,0)"
 
 
 # =============================================================================
-# 3. DATA LOADING — GitHub RAW Excel, auto-refresh on replacement
+# DATA LOADING
 # =============================================================================
 def get_remote_cache_key(url: str) -> str:
-    """Builds a cache-busting key from ETag/Last-Modified so that replacing
-    the file on GitHub (same filename, new content) is picked up without
-    waiting for the TTL to fully expire."""
+    """Cache-busting key from ETag/Last-Modified so a same-name file replaced
+    on GitHub is picked up promptly rather than waiting out the full TTL."""
     try:
         resp = requests.head(url, timeout=10, allow_redirects=True)
         tag = resp.headers.get("ETag") or resp.headers.get("Last-Modified")
@@ -221,31 +174,39 @@ def fetch_workbook_bytes(url: str, cache_key: str) -> bytes:
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def load_all_sheets(file_bytes: bytes) -> dict:
-    """Reads every sheet in the workbook into a dict of DataFrames.
-    No assumptions about sheet names or schema."""
+    """Reads every sheet into a dict of DataFrames. No schema assumptions."""
     sheets = pd.read_excel(BytesIO(file_bytes), sheet_name=None, engine="openpyxl")
     cleaned = {}
     for name, df in sheets.items():
         if df is None or df.empty:
             continue
         df = df.copy()
-        # Drop fully-empty rows/columns, normalize column names to strings.
         df = df.dropna(axis=0, how="all").dropna(axis=1, how="all")
-        df.columns = [str(c).strip() for c in df.columns]
+        df.columns = [clean_column_name(c, i) for i, c in enumerate(df.columns)]
         df = df.reset_index(drop=True)
         if not df.empty:
             cleaned[name] = df
     return cleaned
 
 
+def clean_column_name(col, idx: int) -> str:
+    """Removes pandas' 'Unnamed: N' placeholders and blank headers,
+    replacing them with a friendly, position-based fallback name."""
+    if col is None:
+        return f"KPI {idx + 1}"
+    text = str(col).strip()
+    if not text or text.lower().startswith("unnamed") or text.lower() in ("nan", "none"):
+        return f"KPI {idx + 1}"
+    return re.sub(r"\s+", " ", text)
+
+
 # =============================================================================
-# 4. SCHEMA INFERENCE — detect date / numeric(KPI) / category columns
+# SCHEMA INFERENCE
 # =============================================================================
-def try_parse_dates(series: pd.Series) -> pd.Series:
+def try_parse_dates(series: pd.Series):
     try:
-        parsed = pd.to_datetime(series, errors="coerce", infer_datetime_format=True)
-        valid_ratio = parsed.notna().mean()
-        if valid_ratio >= 0.6:
+        parsed = pd.to_datetime(series, errors="coerce")
+        if parsed.notna().mean() >= 0.6:
             return parsed
     except Exception:
         pass
@@ -253,44 +214,54 @@ def try_parse_dates(series: pd.Series) -> pd.Series:
 
 
 def infer_columns(df: pd.DataFrame):
-    """Classifies each column as date / numeric / category, ignoring columns
-    that are mostly empty or unusable."""
     date_cols, numeric_cols, category_cols = [], [], []
-
     for col in df.columns:
         series = df[col]
         non_null = series.dropna()
         if non_null.empty:
             continue
 
-        # Already a proper datetime dtype
         if pd.api.types.is_datetime64_any_dtype(series):
             date_cols.append(col)
             continue
 
-        # Numeric dtype
         if pd.api.types.is_numeric_dtype(series):
             numeric_cols.append(col)
             continue
 
-        # Try string -> date (only if the column name hints at it or values parse well)
-        name_hint = bool(re.search(r"date|month|period|year", str(col), re.IGNORECASE))
+        name_hint = bool(re.search(r"date|month|period|year|week", str(col), re.IGNORECASE))
         parsed_dates = try_parse_dates(non_null)
         if parsed_dates is not None and (name_hint or parsed_dates.notna().mean() >= 0.85):
             date_cols.append(col)
             continue
 
-        # Try string -> numeric (e.g. "12.5%" wouldn't convert cleanly; plain numbers as text would)
-        coerced = pd.to_numeric(non_null.astype(str).str.replace(",", "", regex=False), errors="coerce")
+        try:
+            coerced = pd.to_numeric(non_null.astype(str).str.replace(",", "", regex=False), errors="coerce")
+        except Exception:
+            coerced = pd.Series(dtype=float)
         if coerced.notna().mean() >= 0.85:
             numeric_cols.append(col)
             continue
 
-        # Otherwise treat as a category column if it has a reasonable number
-        # of distinct values relative to row count (avoids free-text columns).
-        n_unique = non_null.nunique()
+        try:
+            n_unique = non_null.nunique()
+        except Exception:
+            n_unique = 0
         if 1 < n_unique <= max(50, int(len(df) * 0.5)):
             category_cols.append(col)
+
+    # Safe fallback: if nothing was classified as numeric, try harder on the
+    # remaining object columns rather than leaving KPI sections empty.
+    if not numeric_cols:
+        for col in df.columns:
+            if col in date_cols or col in category_cols:
+                continue
+            try:
+                coerced = pd.to_numeric(df[col].astype(str).str.replace(",", "", regex=False), errors="coerce")
+                if coerced.notna().sum() >= max(2, int(len(df) * 0.3)):
+                    numeric_cols.append(col)
+            except Exception:
+                continue
 
     return date_cols, numeric_cols, category_cols
 
@@ -298,36 +269,60 @@ def infer_columns(df: pd.DataFrame):
 def coerce_numeric(series: pd.Series) -> pd.Series:
     if pd.api.types.is_numeric_dtype(series):
         return series
-    return pd.to_numeric(series.astype(str).str.replace(",", "", regex=False), errors="coerce")
+    try:
+        return pd.to_numeric(series.astype(str).str.replace(",", "", regex=False), errors="coerce")
+    except Exception:
+        return pd.Series([np.nan] * len(series), index=series.index)
 
 
 def coerce_date(series: pd.Series) -> pd.Series:
     if pd.api.types.is_datetime64_any_dtype(series):
         return series
-    return pd.to_datetime(series, errors="coerce", infer_datetime_format=True)
-
-
-# =============================================================================
-# 5. FORMATTING HELPERS
-# =============================================================================
-def is_missing(v):
-    return v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v) if not isinstance(v, (list, dict)) else False
-
-
-def fmt_number(value):
     try:
-        if value is None or (isinstance(value, float) and np.isnan(value)):
-            return "N/A"
+        return pd.to_datetime(series, errors="coerce")
+    except Exception:
+        return pd.Series([pd.NaT] * len(series), index=series.index)
+
+
+# =============================================================================
+# FORMATTING HELPERS
+# =============================================================================
+def is_missing(v) -> bool:
+    if v is None:
+        return True
+    try:
+        return bool(pd.isna(v))
+    except (TypeError, ValueError):
+        return False
+
+
+def fmt_number(value) -> str:
+    if is_missing(value):
+        return "N/A"
+    try:
         v = float(value)
-        if abs(v) >= 1_000_000:
-            return f"{v/1_000_000:,.2f}M"
-        if abs(v) >= 1_000:
-            return f"{v:,.0f}"
-        if v == int(v):
-            return f"{int(v):,}"
-        return f"{v:,.2f}"
     except (ValueError, TypeError):
         return "N/A"
+    if abs(v) >= 1_000_000:
+        return f"{v/1_000_000:,.2f}M"
+    if abs(v) >= 1_000:
+        return f"{v:,.0f}"
+    if v == int(v):
+        return f"{int(v):,}"
+    return f"{v:,.2f}"
+
+
+def classify_change(pct_change: float) -> str:
+    """Converts a raw % change into a bounded, human-readable label instead
+    of showing unrealistic swings (e.g. +4500%) as a number."""
+    a = abs(pct_change)
+    if a < 2:
+        return "Stable"
+    if a < 15:
+        return "Moderate Growth" if pct_change > 0 else "Moderate Decline"
+    if a < 60:
+        return "Strong Growth" if pct_change > 0 else "Strong Decline"
+    return "High Growth" if pct_change > 0 else "Sharp Decline"
 
 
 def safe_icon_for(col_name: str) -> str:
@@ -336,9 +331,9 @@ def safe_icon_for(col_name: str) -> str:
         return "⚠️"
     if any(k in name for k in ["energy", "power", "kwh"]):
         return "⚡"
-    if any(k in name for k in ["water"]):
+    if "water" in name:
         return "💧"
-    if any(k in name for k in ["waste"]):
+    if "waste" in name:
         return "🗑️"
     if any(k in name for k in ["production", "volume", "output"]):
         return "🏭"
@@ -349,23 +344,18 @@ def safe_icon_for(col_name: str) -> str:
     return "📈"
 
 
-def accent_for_index(i: int) -> str:
-    palette_cycle = [PAL["primary"], PAL["accent"], PAL["success"], PAL["warning"],
-                      PAL["primary-2"], "#6D28D9", "#0369A1", "#0F766E"]
-    return palette_cycle[i % len(palette_cycle)]
-
-
-def apply_enterprise_layout(fig, height=340, title=None, legend=True):
+def apply_enterprise_layout(fig, height=320, title=None, legend=True):
     fig.update_layout(
         paper_bgcolor=PLOTLY_BG, plot_bgcolor=PLOTLY_BG,
         font=dict(family="Inter, sans-serif", color=PAL["text-mid"], size=12),
         title=dict(text=title, font=dict(size=13.5, color=PAL["text-hi"], family="Inter"),
-                   x=0.01, xanchor="left") if title else None,
+                    x=0.01, xanchor="left") if title else None,
         margin=dict(l=10, r=14, t=44 if title else 16, b=10),
         height=height, showlegend=legend,
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1,
                     font=dict(size=10.5, color=PAL["text-mid"]), bgcolor="rgba(0,0,0,0)"),
         hoverlabel=dict(bgcolor=PAL["surface"], font_size=12, font_family="Inter", bordercolor=PAL["border"]),
+        colorway=[PAL["primary"], PAL["primary-2"], PAL["text-lo"], PAL["text-mid"]],
     )
     fig.update_xaxes(showgrid=False, zeroline=False, color=PAL["text-mid"], linecolor=PAL["border"])
     fig.update_yaxes(showgrid=True, gridcolor=PAL["border"], zeroline=False, color=PAL["text-mid"])
@@ -373,25 +363,22 @@ def apply_enterprise_layout(fig, height=340, title=None, legend=True):
 
 
 # =============================================================================
-# 6. UI SECTIONS
+# SIDEBAR
 # =============================================================================
-def render_sidebar(default_url: str):
+def render_sidebar():
     with st.sidebar:
-        st.markdown(
-            f"""
+        st.markdown(f"""
             <div class="sb-brand">
-                <div class="sb-logo-chip">JFL</div>
+                <div class="sb-logo-chip">{COMPANY_NAME[:3].upper()}</div>
                 <div>
                     <div class="sb-brand-name">{COMPANY_NAME} Analytics</div>
-                    <div class="sb-brand-sub">{PARENT_BRAND} · KPI Console</div>
+                    <div class="sb-brand-sub">Executive KPI Console</div>
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        """, unsafe_allow_html=True)
 
-        st.markdown('<div class="sb-section-title">🔗 &nbsp;Data Source</div>', unsafe_allow_html=True)
-        source_url = st.text_input("GitHub RAW Excel URL", value=default_url, label_visibility="collapsed")
+        st.markdown('<div class="sb-section-title">📡 &nbsp;Data Source Status</div>', unsafe_allow_html=True)
+        status_placeholder = st.empty()
 
         if st.button("🔄  Refresh Data"):
             fetch_workbook_bytes.clear()
@@ -399,28 +386,58 @@ def render_sidebar(default_url: str):
             st.rerun()
 
         st.markdown('<div class="sb-section-title">🧭 &nbsp;Filters</div>', unsafe_allow_html=True)
+    return status_placeholder
 
-    return source_url.strip()
+
+def render_status(placeholder, connected: bool, last_refresh: str, note: str = ""):
+    with placeholder.container():
+        if connected:
+            st.markdown(f"""
+                <div class="status-card">
+                    <div class="status-row"><span class="status-dot"></span>Live · Connected</div>
+                    <div class="status-sub">Last refreshed: {last_refresh}</div>
+                    <div class="status-sub">Auto-syncs every {CACHE_TTL_SECONDS // 60} min</div>
+                </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+                <div class="status-card" style="border-left:3px solid var(--warning);">
+                    <div class="status-row" style="color:var(--warning) !important;">
+                        <span class="status-dot" style="background:var(--warning);"></span>Connection Issue
+                    </div>
+                    <div class="status-sub">{note}</div>
+                </div>
+            """, unsafe_allow_html=True)
 
 
-def render_kpi_card(col_name, value, prev_value, icon, accent):
+# =============================================================================
+# KPI CARD RENDERING
+# =============================================================================
+def render_kpi_card(col_name, value, prev_value, icon):
     display_val = fmt_number(value)
-
     pill_class, arrow, delta_str = "flat", "▬", "No prior period"
+
     if not is_missing(value) and not is_missing(prev_value):
         try:
-            diff = float(value) - float(prev_value)
+            v, p = float(value), float(prev_value)
+            diff = v - p
             if abs(diff) < 1e-9:
                 pill_class, arrow, delta_str = "flat", "▬", "No change"
+            elif abs(p) > 1e-9:
+                pct = (diff / abs(p)) * 100
+                label = classify_change(pct)
+                arrow = "▲" if diff > 0 else "▼"
+                pill_class = "good" if diff > 0 else "bad"
+                delta_str = label
             else:
                 arrow = "▲" if diff > 0 else "▼"
                 pill_class = "good" if diff > 0 else "bad"
-                delta_str = f"{(diff/abs(float(prev_value)))*100:+.1f}%" if abs(float(prev_value)) > 1e-9 else "N/A"
+                delta_str = "New activity"
         except (ValueError, TypeError, ZeroDivisionError):
             pass
 
-    card_html = f"""
-    <div class="kpi-card" style="--card-accent:{accent};">
+    st.markdown(f"""
+    <div class="kpi-card">
         <div>
             <div class="kpi-top-row">
                 <div class="kpi-icon-badge">{icon}</div>
@@ -431,12 +448,35 @@ def render_kpi_card(col_name, value, prev_value, icon, accent):
         </div>
         <div class="kpi-compare">vs previous period: {fmt_number(prev_value)}</div>
     </div>
-    """
-    st.markdown(card_html, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
+
+
+# =============================================================================
+# DASHBOARD SECTIONS
+# =============================================================================
+def render_executive_summary(df, numeric_cols, date_col):
+    st.markdown('<div class="section-label">Executive Summary</div>', unsafe_allow_html=True)
+    if not numeric_cols:
+        st.info("No numeric KPI columns were detected to summarize.")
+        return
+
+    work = df.copy()
+    if date_col and date_col in work.columns:
+        work = work.sort_values(date_col)
+
+    # Hard cap: max 4 KPI cards in the Executive Summary section.
+    top_cols = numeric_cols[:4]
+    cols = st.columns(len(top_cols))
+    for col, name in zip(cols, top_cols):
+        series = coerce_numeric(work[name]).dropna()
+        current_val = series.iloc[-1] if len(series) >= 1 else None
+        prev_val = series.iloc[-2] if len(series) >= 2 else None
+        with col:
+            render_kpi_card(name, current_val, prev_val, safe_icon_for(name))
 
 
 def render_kpi_grid(df, numeric_cols, date_col, columns_per_row=4):
-    st.markdown('<div class="section-label">Key Performance Indicators</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">All KPI Metrics</div>', unsafe_allow_html=True)
     if not numeric_cols:
         st.info("No numeric KPI columns were detected in the selected sheet.")
         return
@@ -453,41 +493,11 @@ def render_kpi_grid(df, numeric_cols, date_col, columns_per_row=4):
             current_val = series.iloc[-1] if len(series) >= 1 else None
             prev_val = series.iloc[-2] if len(series) >= 2 else None
             with col:
-                render_kpi_card(name, current_val, prev_val, safe_icon_for(name),
-                                 accent_for_index(numeric_cols.index(name)))
-
-
-def render_executive_summary(df, numeric_cols, date_col):
-    st.markdown('<div class="section-label">Executive Summary</div>', unsafe_allow_html=True)
-    if not numeric_cols:
-        st.info("No numeric data available to summarize.")
-        return
-
-    work = df.copy()
-    if date_col and date_col in work.columns:
-        work = work.sort_values(date_col)
-
-    top_cols = numeric_cols[:5]
-    tiles = st.columns(len(top_cols)) if top_cols else []
-    for i, (col, name) in enumerate(zip(tiles, top_cols)):
-        series = coerce_numeric(work[name]).dropna()
-        total = series.sum() if len(series) else None
-        avg = series.mean() if len(series) else None
-        with col:
-            st.markdown(
-                f"""
-                <div class="exec-card" style="border-left:4px solid {accent_for_index(i)}; padding:14px 16px;">
-                    <div class="kpi-label" style="margin-bottom:2px;">{name}</div>
-                    <div class="kpi-value" style="font-size:22px;">{fmt_number(total)}</div>
-                    <div class="kpi-compare">Average: {fmt_number(avg)}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+                render_kpi_card(name, current_val, prev_val, safe_icon_for(name))
 
 
 def render_trend_charts(df, numeric_cols, date_col):
-    st.markdown('<div class="section-label">KPI Trends</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Trends</div>', unsafe_allow_html=True)
 
     if not date_col:
         st.info("No date/period column was detected — trend charts require a time axis.")
@@ -511,11 +521,10 @@ def render_trend_charts(df, numeric_cols, date_col):
         for col, metric in zip(cols, row_metrics):
             y = coerce_numeric(work[metric])
             fig = go.Figure()
-            accent = accent_for_index(chart_cols.index(metric))
             fig.add_trace(go.Scatter(
                 x=work[date_col], y=y, mode="lines+markers", fill="tozeroy",
-                line=dict(color=accent, width=2.4, shape="spline"),
-                fillcolor=accent + "22",
+                line=dict(color=PAL["primary"], width=2.4, shape="spline"),
+                fillcolor=PAL["primary"] + "1A",
                 marker=dict(size=6, line=dict(width=1, color=PAL["surface"])),
                 connectgaps=True, name=metric,
             ))
@@ -526,13 +535,18 @@ def render_trend_charts(df, numeric_cols, date_col):
                 st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_category_breakdown(df, numeric_cols, category_cols):
-    if not category_cols or not numeric_cols:
-        return
-    st.markdown('<div class="section-label">Category / Region Breakdown</div>', unsafe_allow_html=True)
+def render_breakdown_analytics(df, numeric_cols, category_cols):
+    st.markdown('<div class="section-label">Breakdown Analytics</div>', unsafe_allow_html=True)
 
-    cat_col = category_cols[0]
-    metric_col = numeric_cols[0]
+    if not category_cols or not numeric_cols:
+        st.info("No categorical columns were detected for breakdown analysis.")
+        return
+
+    c1, c2 = st.columns(2)
+    with c1:
+        cat_col = st.selectbox("Group by", options=category_cols, key="breakdown_cat")
+    with c2:
+        metric_col = st.selectbox("Metric", options=numeric_cols, key="breakdown_metric")
 
     grouped = (
         df[[cat_col, metric_col]]
@@ -543,7 +557,7 @@ def render_category_breakdown(df, numeric_cols, category_cols):
         .sort_values(metric_col, ascending=False)
     )
     if grouped.empty:
-        st.info("No usable category data to break down.")
+        st.info("No usable data to break down for this selection.")
         return
 
     fig = go.Figure(go.Bar(
@@ -562,85 +576,84 @@ def render_data_table(df):
 
 
 # =============================================================================
-# 7. MAIN APP FLOW
+# MAIN
 # =============================================================================
 def main():
-    source_url = render_sidebar(GITHUB_RAW_URL_DEFAULT)
-
-    if not source_url:
-        st.warning("Please provide a GitHub RAW Excel URL in the sidebar.")
-        st.stop()
+    status_placeholder = render_sidebar()
 
     skeleton_placeholder = st.empty()
     with skeleton_placeholder.container():
-        st.markdown('<div class="section-label">Key Performance Indicators</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-label">Executive Summary</div>', unsafe_allow_html=True)
         cols = st.columns(4)
         for c in cols:
             with c:
                 st.markdown('<div class="skel-card"></div>', unsafe_allow_html=True)
 
     sheets, load_error = None, None
-    with st.spinner("⏳ Fetching latest KPI data from GitHub..."):
+    last_refresh_str = "—"
+    with st.spinner("⏳ Fetching latest KPI data..."):
         try:
-            cache_key = get_remote_cache_key(source_url)
-            wb_bytes = fetch_workbook_bytes(source_url, cache_key)
+            cache_key = get_remote_cache_key(GITHUB_RAW_URL)
+            wb_bytes = fetch_workbook_bytes(GITHUB_RAW_URL, cache_key)
             sheets = load_all_sheets(wb_bytes)
+            last_refresh_str = datetime.now().strftime("%d %b %Y, %H:%M:%S")
             if not sheets:
                 load_error = "The workbook was read successfully but contains no usable data."
         except requests.RequestException as e:
-            load_error = f"Could not reach the GitHub RAW URL. Please check your network / URL. Details: {e}"
+            load_error = f"Could not reach the configured data source. Details: {e}"
         except Exception as e:
             load_error = f"Unexpected error while loading the workbook: {e}"
 
     skeleton_placeholder.empty()
+    render_status(status_placeholder, connected=(load_error is None),
+                   last_refresh=last_refresh_str, note=load_error or "")
 
     if load_error:
         st.error(f"⚠️ {load_error}")
-        st.info(
-            "Verify the GitHub RAW URL points to a valid, publicly accessible "
-            "Excel (.xlsx) file with at least one non-empty sheet."
-        )
+        st.info("The dashboard could not load the latest data. Please check back shortly, "
+                "or contact your administrator if the issue persists.")
         st.stop()
 
-    # ---- Sidebar: sheet selector + filters ---------------------------------
+    # ---- Sheet selection ------------------------------------------------
     with st.sidebar:
         sheet_names = list(sheets.keys())
         selected_sheet = st.selectbox("Sheet", options=sheet_names, index=0)
 
-    df_raw = sheets[selected_sheet]
+    df_raw = sheets.get(selected_sheet)
+    if df_raw is None or df_raw.empty:
+        st.warning("The selected sheet has no data available.")
+        st.stop()
+
     date_cols, numeric_cols, category_cols = infer_columns(df_raw)
     primary_date_col = date_cols[0] if date_cols else None
-
     df = df_raw.copy()
 
+    # ---- Sidebar filters --------------------------------------------------
     with st.sidebar:
-        # Date range filter (only if a date column was detected)
         if primary_date_col:
             parsed_dates = coerce_date(df[primary_date_col])
             valid_dates = parsed_dates.dropna()
             if not valid_dates.empty:
                 min_d, max_d = valid_dates.min().date(), valid_dates.max().date()
-                date_range = st.date_input("Date Range", value=(min_d, max_d), min_value=min_d, max_value=max_d)
-                if isinstance(date_range, tuple) and len(date_range) == 2:
-                    start_d, end_d = date_range
-                    mask = parsed_dates.between(pd.Timestamp(start_d), pd.Timestamp(end_d))
-                    df = df[mask.fillna(False)]
+                if min_d == max_d:
+                    st.caption(f"Date: {min_d}")
+                else:
+                    date_range = st.date_input("Date Range", value=(min_d, max_d),
+                                                min_value=min_d, max_value=max_d)
+                    if isinstance(date_range, tuple) and len(date_range) == 2:
+                        start_d, end_d = date_range
+                        mask = parsed_dates.between(pd.Timestamp(start_d), pd.Timestamp(end_d))
+                        df = df[mask.fillna(False)]
 
-        # Category filters (auto-detected)
         active_category_filters = {}
         for cat_col in category_cols[:3]:
-            options = sorted([v for v in df_raw[cat_col].dropna().unique().tolist()])
+            try:
+                options = sorted([v for v in df_raw[cat_col].dropna().unique().tolist()])
+            except TypeError:
+                options = [v for v in df_raw[cat_col].dropna().unique().tolist()]
             if options:
                 selected_vals = st.multiselect(cat_col, options=options, default=options)
                 active_category_filters[cat_col] = selected_vals
-
-        st.markdown('<div class="sb-section-title">🕒 &nbsp;Sync Status</div>', unsafe_allow_html=True)
-        st.markdown(
-            f"""<div class="sb-footnote"><b style="color:var(--text-hi) !important;">Last checked</b><br/>
-            {datetime.now().strftime('%d %b %Y, %H:%M:%S')}<br/><br/>Auto-revalidates every
-            {CACHE_TTL_SECONDS // 60} minutes, or instantly via the Refresh Data button.</div>""",
-            unsafe_allow_html=True,
-        )
 
     for cat_col, vals in active_category_filters.items():
         if vals:
@@ -650,43 +663,39 @@ def main():
         st.warning("No rows match the current filters. Try widening your selection.")
         st.stop()
 
-    # ---- Header --------------------------------------------------------------
+    # ---- Header -------------------------------------------------------------
     current_date_str = datetime.now().strftime("%A, %d %B %Y")
-    st.markdown(
-        f"""
+    st.markdown(f"""
         <div class="app-header">
             <div class="app-header-left">
                 <div class="app-header-icon">📊</div>
                 <div>
-                    <h1>{COMPANY_NAME} Monthly KPI Dashboard</h1>
-                    <p>{PARENT_BRAND} · Performance Overview — Sheet: {selected_sheet}</p>
+                    <h1>{COMPANY_NAME} Executive KPI Dashboard</h1>
+                    <p>Performance Overview — Sheet: {selected_sheet}</p>
                 </div>
             </div>
-            <div class="app-header-right">
-                <div class="header-badge-row">
-                    <div class="header-badge">📅 {current_date_str}</div>
-                    <div class="header-badge">{len(df)} row(s)</div>
-                    <div class="header-badge live"><span class="dot"></span>Live</div>
-                </div>
-                <div class="header-meta">Auto-refresh every {CACHE_TTL_SECONDS // 60} min</div>
+            <div class="header-badge-row">
+                <div class="header-badge">📅 {current_date_str}</div>
+                <div class="header-badge">{len(df)} row(s)</div>
+                <div class="header-badge live">🟢 Live</div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    """, unsafe_allow_html=True)
 
-    # ---- Sections -----------------------------------------------------------
+    # ---- Sections -------------------------------------------------------
     render_executive_summary(df, numeric_cols, primary_date_col)
-    render_kpi_grid(df, numeric_cols, primary_date_col)
     render_trend_charts(df, numeric_cols, primary_date_col)
-    render_category_breakdown(df, numeric_cols, category_cols)
+    render_breakdown_analytics(df, numeric_cols, category_cols)
+
+    st.markdown('<div class="section-label">Detailed KPI Metrics</div>', unsafe_allow_html=True)
+    render_kpi_grid(df, numeric_cols, primary_date_col)
+
     render_data_table(df)
 
     st.caption(
-        f"Data source: GitHub RAW Excel workbook · Sheet '{selected_sheet}' · "
-        f"Detected {len(date_cols)} date column(s), {len(numeric_cols)} numeric column(s), "
-        f"{len(category_cols)} category column(s). Auto-refreshes every {CACHE_TTL_SECONDS // 60} "
-        f"minutes, or instantly via the Refresh Data button."
+        f"Sheet '{selected_sheet}' · Detected {len(date_cols)} date column(s), "
+        f"{len(numeric_cols)} numeric column(s), {len(category_cols)} category column(s). "
+        f"Data auto-refreshes every {CACHE_TTL_SECONDS // 60} minutes, or instantly via Refresh Data."
     )
 
 
