@@ -56,9 +56,6 @@ from plotly.subplots import make_subplots
 #   config.py        -> env vars, thresholds, schema, cache TTLs (no hardcoding)
 #   data_pipeline.py -> fallback caching, schema validation, multi-file auto-detect, logging
 #   kpi_engine.py     -> derived-computation caching, risk/alerting, audit log UI
-import config
-import data_pipeline as dp
-import kpi_engine as ke
 
 # =============================================================================
 # 1. CONFIGURATION
