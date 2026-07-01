@@ -38,7 +38,7 @@ from plotly.subplots import make_subplots
 # =========================================================================
 # Replace this with the RAW GitHub URL of your uploaded Excel file, e.g.:
 # https://raw.githubusercontent.com/<user>/<repo>/main/Monthly_KPI_Summary_Sheet_April_GNSC.xlsx
-GITHUB_RAW_URL = "https://github.com/AayuGo1/energy_dashboard"
+GITHUB_RAW_URL = "https://raw.githubusercontent.com/AayuGo1/energy_dashboard/main/Monthly%20KPI%20Summary%20Sheet_April_GNSC.xlsx"
 
 COMPANY_NAME = "GNSC"
 CACHE_TTL_SECONDS = 300  # data auto-revalidates every 5 minutes
