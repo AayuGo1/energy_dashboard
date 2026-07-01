@@ -1,34 +1,16 @@
 """
-GNSC Monthly KPI Dashboard — Phase 3 (Jubilant FoodWorks Enterprise Edition)
-=============================================================================
-A Streamlit enterprise dashboard that reads the Monthly KPI Summary Sheet
-directly from a GitHub RAW url and renders Power-BI style KPI cards and
-an Executive Dashboard (Plotly), styled after Jubilant FoodWorks' corporate
-visual language: white / light-grey surfaces, deep blue primary, soft red
-accent, clean industrial-analytics typography.
+Monthly KPI Dashboard — Jubilant FoodWorks style Enterprise Edition
+=====================================================================
+Single-file Streamlit application.
 
-WHAT CHANGED IN PHASE 3
-------------------------
-1. BUG FIX (highest priority): KPI cards were previously built by
-   concatenating every card's HTML into one giant string and passing it to
-   a single st.markdown() call. Streamlit's markdown/HTML sanitizer can
-   mis-render (or partially print as literal text) very large concatenated
-   HTML blobs, especially once dynamic values are interpolated into many
-   nested elements. The fix: every KPI card is now rendered as its own
-   isolated component (`render_kpi_card`) inside its own `st.markdown()`
-   call, laid out with native `st.columns()` instead of a hand-rolled CSS
-   grid. Each call is small, self-contained and always renders correctly.
-2. Full visual redesign around a light, enterprise, Jubilant-inspired
-   theme (see PALETTE below) with an optional dark mode toggle.
-3. New Executive Summary strip (Safety / Production / Energy / Water /
-   Waste) sitting above the detailed KPI grid.
-4. Charts restyled to a light Power-BI-like look.
-5. Sidebar rebuilt: logo, navigation-style filters, refresh, theme switch.
-6. Code reorganized into clearly commented, reusable functions.
-
-All original functionality is preserved: GitHub RAW Excel loading,
-caching / auto-refresh, KPI parsing, trend + target calculations, and the
-Executive Dashboard section.
+- Loads an Excel workbook directly from a GitHub RAW URL (no DB, no mock data).
+- Auto-detects date columns, numeric (KPI) columns, and category-type columns.
+- Dynamically builds KPI cards, trend charts, and category breakdowns based on
+  whatever structure the workbook actually has — no fixed schema assumptions.
+- Automatically re-reads the file so that when it's replaced on GitHub with the
+  same filename, the dashboard picks up the new content (short cache TTL +
+  ETag/Last-Modified based cache-busting + manual "Refresh Data" button).
+- Handles missing/partial data gracefully; never crashes on missing columns.
 
 Deployment requirements (requirements.txt alongside this file):
     streamlit
@@ -37,83 +19,49 @@ Deployment requirements (requirements.txt alongside this file):
     requests
     plotly
 
-Deploy on Streamlit Community Cloud by pointing it at this app.py.
+Run:  streamlit run app.py
 """
 
 import re
 import time
-import base64
 from io import BytesIO
 from datetime import datetime
 
 import requests
+import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-
-# Phase 4 modules — additive only, nothing below is duplicated from these:
-#   config.py        -> env vars, thresholds, schema, cache TTLs (no hardcoding)
-#   data_pipeline.py -> fallback caching, schema validation, multi-file auto-detect, logging
-#   kpi_engine.py     -> derived-computation caching, risk/alerting, audit log UI
 
 # =============================================================================
 # 1. CONFIGURATION
 # =============================================================================
-# Phase 4: URL now sourced from config.py (env-overridable) instead of being
-# hardcoded here. Variable name kept identical so nothing else changes.
-GITHUB_RAW_URL = config.GITHUB_RAW_URL_OVERRIDE
-
+GITHUB_RAW_URL_DEFAULT = (
+    "https://raw.githubusercontent.com/AayuGo1/energy_dashboard/main/"
+    "Monthly%20KPI%20Summary%20Sheet_April_GNSC.xlsx"
+)
 COMPANY_NAME = "GNSC"
 PARENT_BRAND = "Jubilant FoodWorks"
 CACHE_TTL_SECONDS = 300  # data auto-revalidates every 5 minutes
 
-MONTH_ORDER = ["Apr", "May", "Jun", "Jul", "Aug", "Sep",
-               "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
-
-# -----------------------------------------------------------------------
-# Jubilant-inspired enterprise palette (Light + Dark variants)
-# -----------------------------------------------------------------------
 PALETTE = {
-    "light": {
-        "bg": "#F5F7FA",
-        "surface": "#FFFFFF",
-        "surface-alt": "#F0F2F6",
-        "border": "#E5E7EB",
-        "text-hi": "#1F2937",
-        "text-mid": "#4B5563",
-        "text-lo": "#9CA3AF",
-        "primary": "#003E7E",
-        "primary-2": "#0A5AA8",
-        "accent": "#D71920",
-        "success": "#16A34A",
-        "warning": "#F59E0B",
-        "danger": "#DC2626",
-        "shadow": "0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06)",
-        "shadow-hover": "0 8px 20px rgba(16,24,40,0.10)",
-    },
-    "dark": {
-        "bg": "#0F172A",
-        "surface": "#16213A",
-        "surface-alt": "#1B2947",
-        "border": "#2A3B5C",
-        "text-hi": "#F3F6FB",
-        "text-mid": "#B6C2DA",
-        "text-lo": "#748099",
-        "primary": "#4F8FD1",
-        "primary-2": "#7AB0EB",
-        "accent": "#FF6B6F",
-        "success": "#34D399",
-        "warning": "#FBBF24",
-        "danger": "#F87171",
-        "shadow": "0 1px 2px rgba(0,0,0,0.25)",
-        "shadow-hover": "0 10px 26px rgba(0,0,0,0.45)",
-    },
+    "bg": "#F5F7FA",
+    "surface": "#FFFFFF",
+    "surface-alt": "#F0F2F6",
+    "border": "#E5E7EB",
+    "text-hi": "#1F2937",
+    "text-mid": "#4B5563",
+    "text-lo": "#9CA3AF",
+    "primary": "#003E7E",
+    "primary-2": "#0A5AA8",
+    "accent": "#D71920",
+    "success": "#16A34A",
+    "warning": "#F59E0B",
+    "danger": "#DC2626",
+    "shadow": "0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06)",
+    "shadow-hover": "0 8px 20px rgba(16,24,40,0.10)",
 }
 
-# =============================================================================
-# 2. PAGE CONFIG + THEME STATE
-# =============================================================================
 st.set_page_config(
     page_title=f"{COMPANY_NAME} | Monthly KPI Dashboard",
     page_icon="📊",
@@ -121,13 +69,12 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-if "theme_mode" not in st.session_state:
-    st.session_state.theme_mode = "light"
 
-
-def inject_theme_css(mode: str):
-    """Injects all CSS variables + component styles for the active theme."""
-    p = PALETTE[mode]
+# =============================================================================
+# 2. THEME / CSS
+# =============================================================================
+def inject_css():
+    p = PALETTE
     st.markdown(
         f"""
         <style>
@@ -145,169 +92,92 @@ def inject_theme_css(mode: str):
         #MainMenu {{visibility:hidden;}}
         footer {{visibility:hidden;}}
         header[data-testid="stHeader"] {{background:transparent;}}
-
         .stApp {{ background:var(--bg); color:var(--text-hi); }}
 
-        /* ---------------- fade-in for main content ---------------- */
         .main .block-container {{ animation: fadeIn .45s ease both; padding-top:1.1rem; }}
         @keyframes fadeIn {{ from{{opacity:0; transform:translateY(6px);}} to{{opacity:1; transform:translateY(0);}} }}
 
-        /* ---------------- SIDEBAR ---------------- */
-        section[data-testid="stSidebar"] {{
-            background:var(--surface); border-right:1px solid var(--border);
-        }}
+        section[data-testid="stSidebar"] {{ background:var(--surface); border-right:1px solid var(--border); }}
         section[data-testid="stSidebar"] * {{ color:var(--text-mid) !important; }}
 
-        .sb-brand {{
-            display:flex; align-items:center; gap:10px;
-            padding:6px 2px 16px 2px; border-bottom:1px solid var(--border); margin-bottom:14px;
-        }}
-        .sb-logo-chip {{
-            width:38px; height:38px; border-radius:10px; flex-shrink:0;
+        .sb-brand {{ display:flex; align-items:center; gap:10px; padding:6px 2px 16px 2px;
+            border-bottom:1px solid var(--border); margin-bottom:14px; }}
+        .sb-logo-chip {{ width:38px; height:38px; border-radius:10px; flex-shrink:0;
             background:linear-gradient(135deg, var(--primary), var(--primary-2));
-            display:flex; align-items:center; justify-content:center;
-            color:#fff !important; font-weight:800; font-size:14px;
-        }}
+            display:flex; align-items:center; justify-content:center; color:#fff !important;
+            font-weight:800; font-size:14px; }}
         .sb-brand-name {{ font-size:15px; font-weight:800; color:var(--text-hi) !important; line-height:1.15; }}
-        .sb-brand-sub {{ font-size:10.5px; color:var(--text-lo) !important; letter-spacing:.5px; text-transform:uppercase; font-weight:700; }}
+        .sb-brand-sub {{ font-size:10.5px; color:var(--text-lo) !important; letter-spacing:.5px;
+            text-transform:uppercase; font-weight:700; }}
+        .sb-section-title {{ font-size:10.5px; text-transform:uppercase; letter-spacing:1.2px;
+            color:var(--text-lo) !important; font-weight:800; margin:18px 0 8px 2px; }}
+        .sb-footnote {{ font-size:11px; line-height:1.5; color:var(--text-lo) !important;
+            background:var(--surface-alt); border:1px solid var(--border); border-radius:8px;
+            padding:9px 11px; margin-top:4px; }}
 
-        .sb-section-title {{
-            font-size:10.5px; text-transform:uppercase; letter-spacing:1.2px;
-            color:var(--text-lo) !important; font-weight:800; margin:18px 0 8px 2px;
-        }}
-
-        section[data-testid="stSidebar"] div[data-baseweb="select"] > div {{
-            background:var(--surface-alt) !important; border:1px solid var(--border) !important;
-            border-radius:8px !important;
-        }}
-        section[data-testid="stSidebar"] label {{
-            font-weight:700 !important; font-size:12px !important; color:var(--text-mid) !important;
-        }}
-
-        div.stButton > button {{
-            background:var(--primary); color:#fff !important; border:none; border-radius:8px;
-            padding:9px 12px; font-weight:700; width:100%; box-shadow:var(--shadow);
-            transition:background .15s ease, transform .15s ease;
-        }}
+        div.stButton > button {{ background:var(--primary); color:#fff !important; border:none;
+            border-radius:8px; padding:9px 12px; font-weight:700; width:100%; box-shadow:var(--shadow);
+            transition:background .15s ease, transform .15s ease; }}
         div.stButton > button:hover {{ background:var(--primary-2); transform:translateY(-1px); }}
 
-        .sb-footnote {{
-            font-size:11px; line-height:1.5; color:var(--text-lo) !important;
-            background:var(--surface-alt); border:1px solid var(--border);
-            border-radius:8px; padding:9px 11px; margin-top:4px;
-        }}
-
-        /* ---------------- HEADER ---------------- */
-        .app-header {{
-            display:flex; align-items:center; justify-content:space-between; gap:16px;
-            padding:18px 24px; margin-bottom:18px; background:var(--surface);
-            border-radius:14px; border:1px solid var(--border); box-shadow:var(--shadow);
-            flex-wrap:wrap;
-        }}
+        .app-header {{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+            padding:18px 24px; margin-bottom:18px; background:var(--surface); border-radius:14px;
+            border:1px solid var(--border); box-shadow:var(--shadow); flex-wrap:wrap; }}
         .app-header-left {{ display:flex; align-items:center; gap:14px; }}
-        .app-header-icon {{
-            width:46px; height:46px; border-radius:12px; display:flex; align-items:center;
+        .app-header-icon {{ width:46px; height:46px; border-radius:12px; display:flex; align-items:center;
             justify-content:center; background:linear-gradient(135deg, var(--primary), var(--primary-2));
-            color:#fff; font-size:20px; flex-shrink:0;
-        }}
+            color:#fff; font-size:20px; flex-shrink:0; }}
         .app-header h1 {{ margin:0; font-size:22px; font-weight:800; color:var(--text-hi); letter-spacing:-.2px; }}
         .app-header p {{ margin:2px 0 0 0; font-size:12.5px; color:var(--text-mid); font-weight:500; }}
         .app-header-right {{ display:flex; flex-direction:column; align-items:flex-end; gap:7px; }}
         .header-badge-row {{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }}
-        .header-badge {{
-            background:var(--surface-alt); border:1px solid var(--border); color:var(--text-mid);
-            padding:5px 12px; border-radius:20px; font-size:11.5px; font-weight:700; white-space:nowrap;
-        }}
+        .header-badge {{ background:var(--surface-alt); border:1px solid var(--border); color:var(--text-mid);
+            padding:5px 12px; border-radius:20px; font-size:11.5px; font-weight:700; white-space:nowrap; }}
         .header-badge.live {{ background:rgba(22,163,74,0.10); border-color:rgba(22,163,74,0.35); color:var(--success); }}
-        .header-badge.live .dot {{
-            display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--success);
-            margin-right:6px; animation:pulseDot 1.8s infinite;
-        }}
-        @keyframes pulseDot {{ 0%{{box-shadow:0 0 0 0 rgba(22,163,74,.55);}} 70%{{box-shadow:0 0 0 6px rgba(22,163,74,0);}} 100%{{box-shadow:0 0 0 0 rgba(22,163,74,0);}} }}
+        .header-badge.live .dot {{ display:inline-block; width:6px; height:6px; border-radius:50%;
+            background:var(--success); margin-right:6px; animation:pulseDot 1.8s infinite; }}
+        @keyframes pulseDot {{ 0%{{box-shadow:0 0 0 0 rgba(22,163,74,.55);}} 70%{{box-shadow:0 0 0 6px rgba(22,163,74,0);}}
+            100%{{box-shadow:0 0 0 0 rgba(22,163,74,0);}} }}
         .header-meta {{ font-size:10.5px; color:var(--text-lo); font-weight:600; }}
 
-        /* ---------------- SECTION LABEL ---------------- */
-        .section-label {{
-            font-size:12px; text-transform:uppercase; letter-spacing:1.2px; color:var(--primary);
-            font-weight:800; margin:22px 0 12px 2px; display:flex; align-items:center; gap:10px;
-        }}
+        .section-label {{ font-size:12px; text-transform:uppercase; letter-spacing:1.2px; color:var(--primary);
+            font-weight:800; margin:22px 0 12px 2px; display:flex; align-items:center; gap:10px; }}
         .section-label::after {{ content:""; flex:1; height:1px; background:var(--border); }}
 
-        /* ---------------- EXEC SUMMARY TILES ---------------- */
-        .exec-tile {{
-            background:var(--surface); border:1px solid var(--border); border-radius:12px;
-            padding:14px 16px; box-shadow:var(--shadow); height:100%;
-            border-left:4px solid var(--tile-accent, var(--primary));
-            transition:transform .18s ease, box-shadow .18s ease; animation:fadeIn .45s ease both;
-        }}
-        .exec-tile:hover {{ transform:translateY(-2px); box-shadow:var(--shadow-hover); }}
-        .exec-tile-label {{ font-size:11px; font-weight:700; color:var(--text-lo); text-transform:uppercase; letter-spacing:.5px; }}
-        .exec-tile-value {{ font-size:24px; font-weight:800; color:var(--text-hi); margin-top:4px; font-variant-numeric:tabular-nums; }}
-        .exec-tile-sub {{ font-size:11px; color:var(--text-mid); margin-top:2px; font-weight:600; }}
-
-        /* ---------------- KPI CARD (rendered ONE AT A TIME, fixes HTML bug) ---------------- */
-        .kpi-card {{
-            background:var(--surface); border:1px solid var(--border); border-radius:12px;
-            padding:16px 16px 14px 16px; box-shadow:var(--shadow); height:198px;
+        .kpi-card {{ background:var(--surface); border:1px solid var(--border); border-radius:12px;
+            padding:16px 16px 14px 16px; box-shadow:var(--shadow); height:170px;
             display:flex; flex-direction:column; justify-content:space-between;
             border-top:3px solid var(--card-accent, var(--primary));
-            transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
-            animation:fadeIn .4s ease both;
-        }}
+            transition:transform .18s ease, box-shadow .18s ease; animation:fadeIn .4s ease both; }}
         .kpi-card:hover {{ transform:translateY(-3px); box-shadow:var(--shadow-hover); }}
         .kpi-top-row {{ display:flex; align-items:flex-start; justify-content:space-between; }}
-        .kpi-icon-badge {{
-            width:34px; height:34px; border-radius:9px; display:flex; align-items:center; justify-content:center;
-            font-size:16px; background:var(--surface-alt); border:1px solid var(--border);
-        }}
-        .kpi-trend-pill {{
-            display:flex; align-items:center; gap:4px; font-size:11px; font-weight:800;
-            padding:3px 9px; border-radius:20px; white-space:nowrap;
-        }}
+        .kpi-icon-badge {{ width:34px; height:34px; border-radius:9px; display:flex; align-items:center;
+            justify-content:center; font-size:16px; background:var(--surface-alt); border:1px solid var(--border); }}
+        .kpi-trend-pill {{ display:flex; align-items:center; gap:4px; font-size:11px; font-weight:800;
+            padding:3px 9px; border-radius:20px; white-space:nowrap; }}
         .kpi-trend-pill.good {{ background:rgba(22,163,74,0.10); color:var(--success); border:1px solid rgba(22,163,74,0.3); }}
         .kpi-trend-pill.bad  {{ background:rgba(220,38,38,0.10); color:var(--danger); border:1px solid rgba(220,38,38,0.3); }}
         .kpi-trend-pill.flat {{ background:var(--surface-alt); color:var(--text-mid); border:1px solid var(--border); }}
         .kpi-value {{ font-size:26px; font-weight:800; color:var(--text-hi); line-height:1.1; font-variant-numeric:tabular-nums; }}
-        .kpi-unit {{ font-size:12px; font-weight:700; color:var(--text-lo); margin-left:4px; }}
-        .kpi-label {{ margin-top:3px; font-size:11.5px; font-weight:700; color:var(--text-mid); text-transform:uppercase; letter-spacing:.3px; }}
+        .kpi-label {{ margin-top:3px; font-size:11.5px; font-weight:700; color:var(--text-mid);
+            text-transform:uppercase; letter-spacing:.3px; }}
         .kpi-compare {{ margin-top:2px; font-size:10.5px; color:var(--text-lo); font-weight:600; }}
-        .kpi-bottom-row {{
-            margin-top:8px; padding-top:8px; border-top:1px solid var(--border);
-            display:flex; align-items:center; justify-content:space-between; gap:8px;
-        }}
-        .kpi-status {{ font-size:10px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; padding:3px 8px; border-radius:6px; }}
-        .kpi-status.ok {{ background:rgba(22,163,74,0.10); color:var(--success); }}
-        .kpi-status.watch {{ background:rgba(245,158,11,0.12); color:var(--warning); }}
-        .kpi-status.risk {{ background:rgba(220,38,38,0.10); color:var(--danger); }}
 
-        /* skeleton shimmer */
-        .skel-card {{
-            height:198px; border-radius:12px; border:1px solid var(--border);
-            background:linear-gradient(100deg, var(--surface-alt) 30%, var(--border) 50%, var(--surface-alt) 70%);
-            background-size:300% 100%; animation:shimmer 1.5s ease-in-out infinite;
-        }}
-        @keyframes shimmer {{ 0%{{background-position:200% 0;}} 100%{{background-position:-200% 0;}} }}
-
-        /* ---------------- EXEC / CHART CARD WRAPPER ---------------- */
-        .exec-card {{
-            background:var(--surface); border:1px solid var(--border); border-radius:12px;
+        .exec-card {{ background:var(--surface); border:1px solid var(--border); border-radius:12px;
             padding:16px 18px; box-shadow:var(--shadow); margin-bottom:18px;
-            transition:box-shadow .18s ease; animation:fadeIn .45s ease both;
-        }}
+            transition:box-shadow .18s ease; animation:fadeIn .45s ease both; }}
         .exec-card:hover {{ box-shadow:var(--shadow-hover); }}
 
-        .stat-mini {{
-            display:flex; align-items:center; justify-content:space-between; gap:8px;
+        .stat-mini {{ display:flex; align-items:center; justify-content:space-between; gap:8px;
             padding:10px 12px; border-radius:8px; background:var(--surface-alt);
-            border:1px solid var(--border); margin-bottom:7px;
-        }}
+            border:1px solid var(--border); margin-bottom:7px; }}
         .stat-mini .stat-label {{ font-size:11.5px; font-weight:700; color:var(--text-mid); }}
         .stat-mini .stat-value {{ font-size:15px; font-weight:800; color:var(--text-hi); font-variant-numeric:tabular-nums; }}
 
-        .score-band {{
-            font-size:10.5px; font-weight:800; letter-spacing:.5px; text-transform:uppercase;
-            padding:4px 12px; border-radius:20px; margin-top:2px; display:inline-block;
-        }}
+        .skel-card {{ height:170px; border-radius:12px; border:1px solid var(--border);
+            background:linear-gradient(100deg, var(--surface-alt) 30%, var(--border) 50%, var(--surface-alt) 70%);
+            background-size:300% 100%; animation:shimmer 1.5s ease-in-out infinite; }}
+        @keyframes shimmer {{ 0%{{background-position:200% 0;}} 100%{{background-position:-200% 0;}} }}
 
         @media (max-width:640px) {{
             .app-header {{ flex-direction:column; align-items:flex-start; }}
@@ -320,19 +190,18 @@ def inject_theme_css(mode: str):
     )
 
 
-inject_theme_css(st.session_state.theme_mode)
-PAL = PALETTE[st.session_state.theme_mode]
-
-# Plotly theme derived from the active palette (used by all chart builders)
+inject_css()
+PAL = PALETTE
 PLOTLY_BG = "rgba(0,0,0,0)"
-PLOTLY_FONT_COLOR = PAL["text-mid"]
-PLOTLY_GRID_COLOR = PAL["border"]
+
 
 # =============================================================================
-# 3. DATA LOADING (unchanged behaviour: GitHub RAW fetch + cache + parse)
+# 3. DATA LOADING — GitHub RAW Excel, auto-refresh on replacement
 # =============================================================================
-def get_remote_etag(url: str):
-    """Lightweight HEAD request used only to build a cache-busting key."""
+def get_remote_cache_key(url: str) -> str:
+    """Builds a cache-busting key from ETag/Last-Modified so that replacing
+    the file on GitHub (same filename, new content) is picked up without
+    waiting for the TTL to fully expire."""
     try:
         resp = requests.head(url, timeout=10, allow_redirects=True)
         tag = resp.headers.get("ETag") or resp.headers.get("Last-Modified")
@@ -350,88 +219,163 @@ def fetch_workbook_bytes(url: str, cache_key: str) -> bytes:
     return resp.content
 
 
-def normalize(text) -> str:
-    if not isinstance(text, str):
-        return ""
-    return re.sub(r"\s+", " ", text).strip().lower()
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def load_all_sheets(file_bytes: bytes) -> dict:
+    """Reads every sheet in the workbook into a dict of DataFrames.
+    No assumptions about sheet names or schema."""
+    sheets = pd.read_excel(BytesIO(file_bytes), sheet_name=None, engine="openpyxl")
+    cleaned = {}
+    for name, df in sheets.items():
+        if df is None or df.empty:
+            continue
+        df = df.copy()
+        # Drop fully-empty rows/columns, normalize column names to strings.
+        df = df.dropna(axis=0, how="all").dropna(axis=1, how="all")
+        df.columns = [str(c).strip() for c in df.columns]
+        df = df.reset_index(drop=True)
+        if not df.empty:
+            cleaned[name] = df
+    return cleaned
 
 
-def find_row_index(series: pd.Series, target_label: str):
-    target = normalize(target_label)
-    for idx, val in series.items():
-        if normalize(val) == target:
-            return idx
+# =============================================================================
+# 4. SCHEMA INFERENCE — detect date / numeric(KPI) / category columns
+# =============================================================================
+def try_parse_dates(series: pd.Series) -> pd.Series:
+    try:
+        parsed = pd.to_datetime(series, errors="coerce", infer_datetime_format=True)
+        valid_ratio = parsed.notna().mean()
+        if valid_ratio >= 0.6:
+            return parsed
+    except Exception:
+        pass
     return None
 
 
-@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def parse_workbook(file_bytes: bytes):
-    """Parse the H&S and Environment sheets into a flat lookup dict:
-    {kpi_key: {month_abbr: value}}"""
-    sheets = pd.read_excel(BytesIO(file_bytes), sheet_name=None, header=None, engine="openpyxl")
+def infer_columns(df: pd.DataFrame):
+    """Classifies each column as date / numeric / category, ignoring columns
+    that are mostly empty or unusable."""
+    date_cols, numeric_cols, category_cols = [], [], []
 
-    hs = sheets.get("H&S")
-    env = sheets.get("Environment")
-    if hs is None or env is None:
-        raise ValueError("Expected sheets 'H&S' and 'Environment' were not found in the workbook.")
+    for col in df.columns:
+        series = df[col]
+        non_null = series.dropna()
+        if non_null.empty:
+            continue
 
-    hs_year_row = hs.iloc[0]
-    year_start = None
-    year_end = None
-    for v in hs_year_row:
-        if isinstance(v, (int, float)) and not pd.isna(v) and 2000 < v < 2100:
-            if year_start is None:
-                year_start = int(v)
-            else:
-                year_end = int(v)
-    if year_start is None:
-        year_start = datetime.now().year
-    if year_end is None:
-        year_end = year_start + 1
-    fy_label = f"{year_start}-{year_end}"
+        # Already a proper datetime dtype
+        if pd.api.types.is_datetime64_any_dtype(series):
+            date_cols.append(col)
+            continue
 
-    hs_label_col = hs[2]
-    env_label_col = env[3]
+        # Numeric dtype
+        if pd.api.types.is_numeric_dtype(series):
+            numeric_cols.append(col)
+            continue
 
-    def month_series(row, start_col, n_months=12):
-        return {MONTH_ORDER[i]: row[start_col + i] for i in range(n_months)}
+        # Try string -> date (only if the column name hints at it or values parse well)
+        name_hint = bool(re.search(r"date|month|period|year", str(col), re.IGNORECASE))
+        parsed_dates = try_parse_dates(non_null)
+        if parsed_dates is not None and (name_hint or parsed_dates.notna().mean() >= 0.85):
+            date_cols.append(col)
+            continue
 
-    kpi_defs = {
-        "fatalities":            ("hs", "Fatalities", 3),
-        "lti":                   ("hs", "Lost Time Injury", 3),
-        "tra":                   ("hs", "Total recordable accidents", 3),
-        "first_aid":             ("hs", "First Aid Accident", 3),
-        "near_miss":             ("hs", "Near miss", 3),
-        "uauc_closure_pct":      ("hs", "% of UA/UC Closure", 3),
-        "worker_participation":  ("hs", "Safety observation worker involvement % [%]", 3),
-        "energy_intensity":      ("env", "Total energy consumption [kWh/Gross Weight (t Metric)]", 4),
-        "water_intensity":       ("env", "Total water withdrawal [m³/Gross Weight (t Metric)]", 4),
-        "waste_intensity":       ("env", "Total waste per t(Metrics) [kg/Gross Weight (t Metric)]", 4),
-        "production_volume":     ("env", "Production Volume - Gross Weight [Gross Weight (t Metric)]", 4),
-    }
+        # Try string -> numeric (e.g. "12.5%" wouldn't convert cleanly; plain numbers as text would)
+        coerced = pd.to_numeric(non_null.astype(str).str.replace(",", "", regex=False), errors="coerce")
+        if coerced.notna().mean() >= 0.85:
+            numeric_cols.append(col)
+            continue
 
-    results = {}
-    for key, (sheet_key, label, start_col) in kpi_defs.items():
-        if sheet_key == "hs":
-            row_idx = find_row_index(hs_label_col, label)
-            row = hs.iloc[row_idx] if row_idx is not None else None
-        else:
-            row_idx = find_row_index(env_label_col, label)
-            row = env.iloc[row_idx] if row_idx is not None else None
+        # Otherwise treat as a category column if it has a reasonable number
+        # of distinct values relative to row count (avoids free-text columns).
+        n_unique = non_null.nunique()
+        if 1 < n_unique <= max(50, int(len(df) * 0.5)):
+            category_cols.append(col)
 
-        results[key] = month_series(row, start_col) if row is not None else {m: None for m in MONTH_ORDER}
+    return date_cols, numeric_cols, category_cols
 
-    return {
-        "fy_label": fy_label,
-        "kpis": results,
-        "loaded_at": datetime.now().strftime("%d %b %Y, %H:%M:%S"),
-    }
+
+def coerce_numeric(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_numeric_dtype(series):
+        return series
+    return pd.to_numeric(series.astype(str).str.replace(",", "", regex=False), errors="coerce")
+
+
+def coerce_date(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return series
+    return pd.to_datetime(series, errors="coerce", infer_datetime_format=True)
 
 
 # =============================================================================
-# 4. SIDEBAR — brand, logo, filters, refresh, theme switch
+# 5. FORMATTING HELPERS
 # =============================================================================
-def render_sidebar():
+def is_missing(v):
+    return v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v) if not isinstance(v, (list, dict)) else False
+
+
+def fmt_number(value):
+    try:
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return "N/A"
+        v = float(value)
+        if abs(v) >= 1_000_000:
+            return f"{v/1_000_000:,.2f}M"
+        if abs(v) >= 1_000:
+            return f"{v:,.0f}"
+        if v == int(v):
+            return f"{int(v):,}"
+        return f"{v:,.2f}"
+    except (ValueError, TypeError):
+        return "N/A"
+
+
+def safe_icon_for(col_name: str) -> str:
+    name = col_name.lower()
+    if any(k in name for k in ["fatal", "injur", "accident", "safety", "incident"]):
+        return "⚠️"
+    if any(k in name for k in ["energy", "power", "kwh"]):
+        return "⚡"
+    if any(k in name for k in ["water"]):
+        return "💧"
+    if any(k in name for k in ["waste"]):
+        return "🗑️"
+    if any(k in name for k in ["production", "volume", "output"]):
+        return "🏭"
+    if any(k in name for k in ["revenue", "sales", "cost", "price", "profit"]):
+        return "💰"
+    if any(k in name for k in ["%", "percent", "pct", "rate"]):
+        return "📊"
+    return "📈"
+
+
+def accent_for_index(i: int) -> str:
+    palette_cycle = [PAL["primary"], PAL["accent"], PAL["success"], PAL["warning"],
+                      PAL["primary-2"], "#6D28D9", "#0369A1", "#0F766E"]
+    return palette_cycle[i % len(palette_cycle)]
+
+
+def apply_enterprise_layout(fig, height=340, title=None, legend=True):
+    fig.update_layout(
+        paper_bgcolor=PLOTLY_BG, plot_bgcolor=PLOTLY_BG,
+        font=dict(family="Inter, sans-serif", color=PAL["text-mid"], size=12),
+        title=dict(text=title, font=dict(size=13.5, color=PAL["text-hi"], family="Inter"),
+                   x=0.01, xanchor="left") if title else None,
+        margin=dict(l=10, r=14, t=44 if title else 16, b=10),
+        height=height, showlegend=legend,
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1,
+                    font=dict(size=10.5, color=PAL["text-mid"]), bgcolor="rgba(0,0,0,0)"),
+        hoverlabel=dict(bgcolor=PAL["surface"], font_size=12, font_family="Inter", bordercolor=PAL["border"]),
+    )
+    fig.update_xaxes(showgrid=False, zeroline=False, color=PAL["text-mid"], linecolor=PAL["border"])
+    fig.update_yaxes(showgrid=True, gridcolor=PAL["border"], zeroline=False, color=PAL["text-mid"])
+    return fig
+
+
+# =============================================================================
+# 6. UI SECTIONS
+# =============================================================================
+def render_sidebar(default_url: str):
     with st.sidebar:
         st.markdown(
             f"""
@@ -446,211 +390,34 @@ def render_sidebar():
             unsafe_allow_html=True,
         )
 
-        logo_file = st.file_uploader("Company Logo", type=["png", "jpg", "jpeg", "svg"], label_visibility="collapsed")
-        if logo_file is not None:
-            logo_b64 = base64.b64encode(logo_file.getvalue()).decode()
-            mime = logo_file.type or "image/png"
-            st.markdown(
-                f'<div style="border:1px dashed var(--border); border-radius:10px; padding:8px; '
-                f'text-align:center; margin-bottom:6px;"><img src="data:{mime};base64,{logo_b64}" '
-                f'style="max-height:64px; max-width:100%; object-fit:contain;"/></div>',
-                unsafe_allow_html=True,
-            )
-
-        st.markdown('<div class="sb-section-title">⚙️ &nbsp;Display</div>', unsafe_allow_html=True)
-        mode_choice = st.radio(
-            "Theme", options=["Light", "Dark"],
-            index=0 if st.session_state.theme_mode == "light" else 1,
-            horizontal=True, label_visibility="collapsed",
-        )
-        new_mode = "light" if mode_choice == "Light" else "dark"
-        if new_mode != st.session_state.theme_mode:
-            st.session_state.theme_mode = new_mode
-            st.rerun()
+        st.markdown('<div class="sb-section-title">🔗 &nbsp;Data Source</div>', unsafe_allow_html=True)
+        source_url = st.text_input("GitHub RAW Excel URL", value=default_url, label_visibility="collapsed")
 
         if st.button("🔄  Refresh Data"):
             fetch_workbook_bytes.clear()
-            parse_workbook.clear()
-            ke.compute_kpi_derivatives.clear()
+            load_all_sheets.clear()
             st.rerun()
-
-        # Phase 4 §6 (optional): role-based view — controls which sections
-        # render further down in main(), without touching any render_* fn.
-        st.markdown('<div class="sb-section-title">👤 &nbsp;View As</div>', unsafe_allow_html=True)
-        if "view_role" not in st.session_state:
-            st.session_state.view_role = config.DEFAULT_VIEW_ROLE
-        st.session_state.view_role = st.selectbox(
-            "Role", options=config.VIEW_ROLES,
-            index=config.VIEW_ROLES.index(st.session_state.view_role),
-            label_visibility="collapsed",
-        )
 
         st.markdown('<div class="sb-section-title">🧭 &nbsp;Filters</div>', unsafe_allow_html=True)
 
-    return logo_file
+    return source_url.strip()
 
 
-# =============================================================================
-# 5. FORMATTING + TREND HELPERS
-# =============================================================================
-def is_missing(v):
-    return v is None or (isinstance(v, float) and pd.isna(v))
+def render_kpi_card(col_name, value, prev_value, icon, accent):
+    display_val = fmt_number(value)
 
-
-def fmt_count(value):
-    if is_missing(value):
-        return "N/A"
-    try:
-        return f"{int(round(float(value))):,}"
-    except (ValueError, TypeError):
-        return str(value)
-
-
-def fmt_percent(value):
-    if is_missing(value):
-        return "N/A"
-    try:
-        return f"{float(value) * 100:.1f}%"
-    except (ValueError, TypeError):
-        return str(value)
-
-
-def fmt_decimal(value, decimals=2):
-    if is_missing(value):
-        return "N/A"
-    try:
-        return f"{float(value):,.{decimals}f}"
-    except (ValueError, TypeError):
-        return str(value)
-
-
-HIGHER_IS_BETTER = {
-    "fatalities": False, "lti": False, "tra": False, "first_aid": False, "near_miss": False,
-    "uauc_closure_pct": True, "worker_participation": True,
-    "energy_intensity": False, "water_intensity": False, "waste_intensity": False,
-    "production_volume": True,
-}
-PERCENT_KPIS = {"uauc_closure_pct", "worker_participation"}
-
-
-def compute_trend(kpi_key, current_val, previous_val):
-    """Return (pill_class, arrow, comparison_text)."""
-    if is_missing(current_val) or is_missing(previous_val):
-        return "flat", "▬", "No prior month data"
-
-    cur, prev = float(current_val), float(previous_val)
-    diff = cur - prev
-    higher_better = HIGHER_IS_BETTER.get(kpi_key, True)
-
-    if abs(diff) < 1e-9:
-        return "flat", "▬", "No change vs previous month"
-
-    arrow = "▲" if diff > 0 else "▼"
-    improved = (diff > 0) == higher_better
-    pill_class = "good" if improved else "bad"
-
-    if kpi_key in PERCENT_KPIS:
-        delta_str = f"{diff*100:+.1f} pp"
-    else:
-        delta_str = f"{(diff/abs(prev))*100:+.1f}%" if abs(prev) > 1e-9 else "N/A"
-
-    return pill_class, arrow, delta_str
-
-
-def status_from_trend(pill_class):
-    """Map a trend pill to a compact status chip (OK / Watch / Risk)."""
-    return {"good": ("ok", "On Track"), "flat": ("watch", "Stable"), "bad": ("risk", "Attention")}[pill_class]
-
-
-def make_sparkline_svg(values, accent, width=100, height=30):
-    """Minimal inline SVG sparkline with gradient fill + end dot. Colors
-    respond to the active theme via the accent hex passed in."""
-    clean = [v for v in values if not is_missing(v)]
-    if len(clean) < 2:
-        y = height / 2
-        return (f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}">'
-                f'<line x1="4" y1="{y}" x2="{width-4}" y2="{y}" stroke="{accent}" '
-                f'stroke-width="2" stroke-linecap="round" stroke-dasharray="2,4" opacity="0.45"/></svg>')
-
-    nums = [float(v) if not is_missing(v) else None for v in values]
-    valid_nums = [n for n in nums if n is not None]
-    lo, hi = min(valid_nums), max(valid_nums)
-    rng = (hi - lo) or 1.0
-    pad_x, pad_y = 4, 4
-    n = len(nums)
-    step = (width - 2 * pad_x) / (n - 1)
-
-    points = []
-    for i, val in enumerate(nums):
-        if val is None:
-            continue
-        x = pad_x + i * step
-        y = height - pad_y - ((val - lo) / rng) * (height - 2 * pad_y)
-        points.append((x, y))
-
-    if len(points) < 2:
-        y = height / 2
-        return (f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}">'
-                f'<line x1="4" y1="{y}" x2="{width-4}" y2="{y}" stroke="{accent}" stroke-width="2" opacity="0.45"/></svg>')
-
-    poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
-    area = f"{pad_x:.1f},{height-pad_y:.1f} " + poly + f" {points[-1][0]:.1f},{height-pad_y:.1f}"
-    last_x, last_y = points[-1]
-    uid = f"sg{abs(hash(str(values) + accent)) % 100000}"
-
-    return f"""<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}">
-        <defs><linearGradient id="{uid}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="{accent}" stop-opacity="0.35"/>
-            <stop offset="100%" stop-color="{accent}" stop-opacity="0"/>
-        </linearGradient></defs>
-        <polygon points="{area}" fill="url(#{uid})"/>
-        <polyline points="{poly}" fill="none" stroke="{accent}" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round"/>
-        <circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="2.8" fill="{accent}"/>
-    </svg>"""
-
-
-# =============================================================================
-# 6. KPI CARD DEFINITIONS
-# =============================================================================
-CARD_DEFS = [
-    ("fatalities", "Fatalities", "💀", PALETTE["light"]["danger"], fmt_count, ""),
-    ("lti", "LTI", "🩹", "#E8590C", fmt_count, ""),
-    ("tra", "TRA", "📋", PALETTE["light"]["warning"], fmt_count, ""),
-    ("first_aid", "First Aid Cases", "🧰", "#D97706", fmt_count, ""),
-    ("near_miss", "Near Miss", "⚠️", "#CA8A04", fmt_count, ""),
-    ("uauc_closure_pct", "UA/UC Closure %", "✅", PALETTE["light"]["success"], fmt_percent, ""),
-    ("worker_participation", "Worker Participation %", "🧑‍🤝‍🧑", PALETTE["light"]["primary-2"], fmt_percent, ""),
-    ("energy_intensity", "Energy Intensity", "⚡", "#6D28D9", fmt_decimal, "kWh/t"),
-    ("water_intensity", "Water Intensity", "💧", "#0369A1", fmt_decimal, "m³/t"),
-    ("waste_intensity", "Waste Intensity", "🗑️", "#0F766E", fmt_decimal, "kg/t"),
-    ("production_volume", "Production Volume", "🏭", PALETTE["light"]["primary"], fmt_decimal, "t (Metric)"),
-]
-
-
-def render_kpi_card(key, label, icon, accent, formatter, unit, kpis, selected_month, prev_month, window_months):
-    """
-    Renders exactly ONE KPI card via its own st.markdown() call.
-    This is the core bug fix: previously all cards were joined into a single
-    giant HTML string, which Streamlit could mis-render (raw HTML text
-    leaking onto the page). Rendering one small, self-contained block per
-    card guarantees correct HTML rendering every time.
-    """
-    series = kpis.get(key, {})
-    current_val = series.get(selected_month)
-    previous_val = series.get(prev_month) if prev_month else None
-
-    display_val = formatter(current_val)
-    unit_html = f'<span class="kpi-unit">{unit}</span>' if (unit and display_val != "N/A") else ""
-
-    pill_class, arrow, delta_str = compute_trend(key, current_val, previous_val)
-    prev_display = formatter(previous_val) if prev_month else "N/A"
-    status_class, status_label = status_from_trend(pill_class)
-
-    spark_values = [series.get(m) for m in window_months]
-    spark_svg = make_sparkline_svg(spark_values, accent=accent)
-
-    compare_text = f"vs {prev_month}: {prev_display}" if prev_month else "First month of FY"
+    pill_class, arrow, delta_str = "flat", "▬", "No prior period"
+    if not is_missing(value) and not is_missing(prev_value):
+        try:
+            diff = float(value) - float(prev_value)
+            if abs(diff) < 1e-9:
+                pill_class, arrow, delta_str = "flat", "▬", "No change"
+            else:
+                arrow = "▲" if diff > 0 else "▼"
+                pill_class = "good" if diff > 0 else "bad"
+                delta_str = f"{(diff/abs(float(prev_value)))*100:+.1f}%" if abs(float(prev_value)) > 1e-9 else "N/A"
+        except (ValueError, TypeError, ZeroDivisionError):
+            pass
 
     card_html = f"""
     <div class="kpi-card" style="--card-accent:{accent};">
@@ -659,410 +426,151 @@ def render_kpi_card(key, label, icon, accent, formatter, unit, kpis, selected_mo
                 <div class="kpi-icon-badge">{icon}</div>
                 <div class="kpi-trend-pill {pill_class}">{arrow} {delta_str}</div>
             </div>
-            <div class="kpi-value">{display_val}{unit_html}</div>
-            <div class="kpi-label">{label}</div>
-            <div class="kpi-compare">{compare_text}</div>
+            <div class="kpi-value">{display_val}</div>
+            <div class="kpi-label">{col_name}</div>
         </div>
-        <div class="kpi-bottom-row">
-            {spark_svg}
-            <span class="kpi-status {status_class}">{status_label}</span>
-        </div>
+        <div class="kpi-compare">vs previous period: {fmt_number(prev_value)}</div>
     </div>
     """
     st.markdown(card_html, unsafe_allow_html=True)
 
 
-def render_kpi_grid(kpis, selected_month, prev_month, window_months, columns_per_row=4):
-    """Lays out KPI cards using native st.columns() so each card gets its
-    own isolated markdown call (see render_kpi_card docstring)."""
-    for row_start in range(0, len(CARD_DEFS), columns_per_row):
-        row_defs = CARD_DEFS[row_start: row_start + columns_per_row]
-        cols = st.columns(len(row_defs))
-        for col, (key, label, icon, accent, formatter, unit) in zip(cols, row_defs):
+def render_kpi_grid(df, numeric_cols, date_col, columns_per_row=4):
+    st.markdown('<div class="section-label">Key Performance Indicators</div>', unsafe_allow_html=True)
+    if not numeric_cols:
+        st.info("No numeric KPI columns were detected in the selected sheet.")
+        return
+
+    work = df.copy()
+    if date_col and date_col in work.columns:
+        work = work.sort_values(date_col)
+
+    for i in range(0, len(numeric_cols), columns_per_row):
+        row_cols = numeric_cols[i:i + columns_per_row]
+        cols = st.columns(len(row_cols))
+        for col, name in zip(cols, row_cols):
+            series = coerce_numeric(work[name]).dropna()
+            current_val = series.iloc[-1] if len(series) >= 1 else None
+            prev_val = series.iloc[-2] if len(series) >= 2 else None
             with col:
-                render_kpi_card(key, label, icon, accent, formatter, unit,
-                                 kpis, selected_month, prev_month, window_months)
+                render_kpi_card(name, current_val, prev_val, safe_icon_for(name),
+                                 accent_for_index(numeric_cols.index(name)))
 
 
-# =============================================================================
-# 7. EXECUTIVE SUMMARY STRIP (Safety / Production / Energy / Water / Waste)
-# =============================================================================
-def render_exec_tile(label, value, sub, accent):
-    st.markdown(
-        f"""
-        <div class="exec-tile" style="--tile-accent:{accent};">
-            <div class="exec-tile-label">{label}</div>
-            <div class="exec-tile-value">{value}</div>
-            <div class="exec-tile-sub">{sub}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_executive_summary(kpis, selected_month, prev_month, hse_score):
+def render_executive_summary(df, numeric_cols, date_col):
     st.markdown('<div class="section-label">Executive Summary</div>', unsafe_allow_html=True)
-    c1, c2, c3, c4, c5 = st.columns(5)
+    if not numeric_cols:
+        st.info("No numeric data available to summarize.")
+        return
 
-    score_val = hse_score if hse_score is not None else 0
-    band = "Excellent" if score_val >= 75 else ("Watch" if score_val >= 50 else "At Risk")
-    with c1:
-        render_exec_tile("Safety Score", f"{score_val:.0f} / 100", band, PAL["primary"])
+    work = df.copy()
+    if date_col and date_col in work.columns:
+        work = work.sort_values(date_col)
 
-    def get(key):
-        return kpis.get(key, {}).get(selected_month)
-
-    prod_val = get("production_volume")
-    _, arrow_p, delta_p = compute_trend("production_volume", prod_val, kpis.get("production_volume", {}).get(prev_month) if prev_month else None)
-    with c2:
-        render_exec_tile("Production", fmt_decimal(prod_val, 0) + " t", f"{arrow_p} {delta_p}", PAL["primary"])
-
-    energy_val = get("energy_intensity")
-    _, arrow_e, delta_e = compute_trend("energy_intensity", energy_val, kpis.get("energy_intensity", {}).get(prev_month) if prev_month else None)
-    with c3:
-        render_exec_tile("Energy Intensity", fmt_decimal(energy_val) + " kWh/t", f"{arrow_e} {delta_e}", "#6D28D9")
-
-    water_val = get("water_intensity")
-    _, arrow_w, delta_w = compute_trend("water_intensity", water_val, kpis.get("water_intensity", {}).get(prev_month) if prev_month else None)
-    with c4:
-        render_exec_tile("Water Intensity", fmt_decimal(water_val) + " m³/t", f"{arrow_w} {delta_w}", "#0369A1")
-
-    waste_val = get("waste_intensity")
-    _, arrow_ws, delta_ws = compute_trend("waste_intensity", waste_val, kpis.get("waste_intensity", {}).get(prev_month) if prev_month else None)
-    with c5:
-        render_exec_tile("Waste Intensity", fmt_decimal(waste_val) + " kg/t", f"{arrow_ws} {delta_ws}", "#0F766E")
-
-
-# =============================================================================
-# 8. PLOTLY CHART HELPERS — light, Power-BI style, theme-aware
-# =============================================================================
-def hex_to_rgba(hex_color: str, alpha: float = 0.15) -> str:
-    hex_color = (hex_color or "").lstrip("#")
-    if len(hex_color) != 6:
-        return f"rgba(0,62,126,{alpha})"
-    r, g, b = tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
-    return f"rgba({r},{g},{b},{alpha})"
-
-
-def apply_enterprise_layout(fig, height=320, title=None, legend=True):
-    fig.update_layout(
-        paper_bgcolor=PLOTLY_BG, plot_bgcolor=PLOTLY_BG,
-        font=dict(family="Inter, sans-serif", color=PLOTLY_FONT_COLOR, size=12),
-        title=dict(text=title, font=dict(size=13.5, color=PAL["text-hi"], family="Inter"), x=0.01, xanchor="left") if title else None,
-        margin=dict(l=10, r=14, t=44 if title else 16, b=10),
-        height=height, showlegend=legend,
-        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1,
-                    font=dict(size=10.5, color=PLOTLY_FONT_COLOR), bgcolor="rgba(0,0,0,0)"),
-        hoverlabel=dict(bgcolor=PAL["surface"], font_size=12, font_family="Inter", bordercolor=PAL["border"]),
-        transition=dict(duration=400, easing="cubic-in-out"),
-    )
-    fig.update_xaxes(showgrid=False, zeroline=False, color=PLOTLY_FONT_COLOR, linecolor=PAL["border"])
-    fig.update_yaxes(showgrid=True, gridcolor=PLOTLY_GRID_COLOR, zeroline=False, color=PLOTLY_FONT_COLOR)
-    return fig
-
-
-def normalize_score(value, history_values, higher_is_better):
-    valid = [float(v) for v in history_values if not is_missing(v)]
-    if is_missing(value) or not valid:
-        return None
-    lo, hi = min(valid), max(valid)
-    val = float(value)
-    if hi == lo:
-        return 100.0
-    pct = (val - lo) / (hi - lo)
-    return round((pct if higher_is_better else (1 - pct)) * 100, 1)
-
-
-def compute_hse_score(kpis, months_upto, month):
-    weights = {
-        "fatalities": 3.0, "lti": 2.5, "tra": 1.5, "first_aid": 1.0, "near_miss": 1.0,
-        "uauc_closure_pct": 1.5, "worker_participation": 1.5,
-        "energy_intensity": 1.0, "water_intensity": 1.0, "waste_intensity": 1.0,
-    }
-    weighted = []
-    for key, w in weights.items():
-        series = kpis.get(key, {})
-        history = [series.get(m) for m in months_upto]
-        s = normalize_score(series.get(month), history, HIGHER_IS_BETTER.get(key, True))
-        if s is not None:
-            weighted.append((s, w))
-    if not weighted:
-        return None
-    total_w = sum(w for _, w in weighted)
-    return round(sum(s * w for s, w in weighted) / total_w, 1)
-
-
-def fy_target(kpis, key, months_upto, exclude_current=None):
-    series = kpis.get(key, {})
-    vals = [series.get(m) for m in months_upto if m != exclude_current]
-    valid = [float(v) for v in vals if not is_missing(v)]
-    return (sum(valid) / len(valid)) if valid else None
-
-
-def fy_sum(kpis, key, months_upto):
-    series = kpis.get(key, {})
-    valid = [float(series.get(m)) for m in months_upto if not is_missing(series.get(m))]
-    return sum(valid) if valid else None
-
-
-def fy_avg(kpis, key, months_upto):
-    series = kpis.get(key, {})
-    valid = [float(series.get(m)) for m in months_upto if not is_missing(series.get(m))]
-    return (sum(valid) / len(valid)) if valid else None
-
-
-def make_gauge(value, target, title, accent, suffix=""):
-    display_value = 0 if value is None else value
-    ref = target if target is not None else display_value
-    axis_max = max(display_value, ref, 1) * 1.35
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number+delta", value=display_value,
-        number={"suffix": suffix, "font": {"size": 22, "color": PAL["text-hi"]}},
-        delta={"reference": ref, "relative": False,
-               "increasing": {"color": PAL["success"]}, "decreasing": {"color": PAL["danger"]},
-               "font": {"size": 11}},
-        title={"text": title, "font": {"size": 12, "color": PAL["text-mid"]}},
-        gauge={
-            "axis": {"range": [0, axis_max], "tickcolor": PAL["text-lo"], "tickfont": {"color": PAL["text-lo"], "size": 9}},
-            "bar": {"color": accent, "thickness": 0.65},
-            "bgcolor": PAL["surface-alt"], "borderwidth": 1, "bordercolor": PAL["border"],
-            "threshold": {"line": {"color": PAL["warning"], "width": 3}, "thickness": 0.8, "value": ref} if target is not None else None,
-        },
-    ))
-    apply_enterprise_layout(fig, height=200, legend=False)
-    return fig
-
-
-def make_score_gauge(score):
-    score = 0 if score is None else score
-    color = PAL["success"] if score >= 75 else (PAL["warning"] if score >= 50 else PAL["danger"])
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number", value=score,
-        number={"suffix": " / 100", "font": {"size": 24, "color": PAL["text-hi"]}},
-        gauge={
-            "axis": {"range": [0, 100], "tickcolor": PAL["text-lo"], "tickfont": {"color": PAL["text-lo"], "size": 9}},
-            "bar": {"color": color, "thickness": 0.68},
-            "bgcolor": PAL["surface-alt"], "borderwidth": 1, "bordercolor": PAL["border"],
-            "steps": [
-                {"range": [0, 50], "color": hex_to_rgba(PAL["danger"], 0.10)},
-                {"range": [50, 75], "color": hex_to_rgba(PAL["warning"], 0.10)},
-                {"range": [75, 100], "color": hex_to_rgba(PAL["success"], 0.10)},
-            ],
-        },
-    ))
-    apply_enterprise_layout(fig, height=220, legend=False)
-    return fig
-
-
-def make_multiline_chart(kpis, months, series_defs, title, yaxis_title=""):
-    fig = go.Figure()
-    for key, label, color in series_defs:
-        y = [kpis.get(key, {}).get(m) for m in months]
-        fig.add_trace(go.Scatter(
-            x=months, y=y, mode="lines+markers", name=label,
-            line=dict(color=color, width=2.4, shape="spline"),
-            marker=dict(size=6, line=dict(width=1, color=PAL["surface"])),
-            connectgaps=True,
-        ))
-    apply_enterprise_layout(fig, height=330, title=title)
-    fig.update_yaxes(title_text=yaxis_title, title_font=dict(size=11, color=PAL["text-lo"]))
-    return fig
-
-
-def make_single_trend_chart(kpis, months, key, label, color, unit=""):
-    y = [kpis.get(key, {}).get(m) for m in months]
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=months, y=y, mode="lines+markers", fill="tozeroy",
-        line=dict(color=color, width=2.4, shape="spline"),
-        fillcolor=hex_to_rgba(color, 0.14),
-        marker=dict(size=6, line=dict(width=1, color=PAL["surface"])),
-        connectgaps=True, name=label,
-    ))
-    title_suffix = f" · {unit}" if unit else ""
-    apply_enterprise_layout(fig, height=240, title=f"{label}{title_suffix}", legend=False)
-    return fig
-
-
-def make_mom_bar_chart(labels, current_vals, previous_vals, current_label, previous_label):
-    fig = go.Figure()
-    fig.add_trace(go.Bar(name=previous_label, x=labels, y=previous_vals,
-                          marker_color=PAL["border"], marker_line_width=0))
-    fig.add_trace(go.Bar(name=current_label, x=labels, y=current_vals,
-                          marker_color=PAL["primary"], marker_line_width=0))
-    fig.update_layout(barmode="group", bargap=0.28, bargroupgap=0.12)
-    apply_enterprise_layout(fig, height=320, title="Month-over-Month · Safety Incident Counts")
-    return fig
-
-
-def make_production_chart(kpis, months):
-    cum, running, has_any = [], 0.0, False
-    for m in months:
-        v = kpis.get("production_volume", {}).get(m)
-        if not is_missing(v):
-            running += float(v)
-            has_any = True
-        cum.append(running if has_any else None)
-
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(
-        go.Bar(x=months, y=[kpis.get("production_volume", {}).get(m) for m in months],
-               name="Monthly Volume", marker_color=hex_to_rgba(PAL["primary"], 0.55)),
-        secondary_y=False,
-    )
-    fig.add_trace(
-        go.Scatter(x=months, y=cum, name="Cumulative Volume", mode="lines+markers",
-                   line=dict(color=PAL["accent"], width=2.4, shape="spline"), marker=dict(size=6)),
-        secondary_y=True,
-    )
-    apply_enterprise_layout(fig, height=340, title="Production Volume · Monthly vs Cumulative")
-    fig.update_yaxes(title_text="t (Metric) / month", secondary_y=False, title_font=dict(size=10, color=PAL["text-lo"]))
-    fig.update_yaxes(title_text="Cumulative t (Metric)", secondary_y=True, showgrid=False, title_font=dict(size=10, color=PAL["text-lo"]))
-    return fig
-
-
-# =============================================================================
-# 9. EXECUTIVE DASHBOARD SECTION (gauges, trends, comparisons, cumulative stats)
-# =============================================================================
-def render_executive_dashboard(kpis, selected_fy, selected_month, prev_month, months_upto, hse_score):
-    st.markdown('<div class="section-label">Executive Dashboard</div>', unsafe_allow_html=True)
-
-    score_col, gauge_col1, gauge_col2, gauge_col3 = st.columns([1.1, 1, 1, 1])
-    with score_col:
-        st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-        st.markdown('<div class="kpi-label" style="margin-bottom:4px;">Monthly HSE Performance Score</div>', unsafe_allow_html=True)
-        st.plotly_chart(make_score_gauge(hse_score), use_container_width=True, config={"displayModeBar": False})
-        score_val = hse_score or 0
-        band = "Excellent" if score_val >= 75 else ("Watch" if score_val >= 50 else "At Risk")
-        band_color = PAL["success"] if score_val >= 75 else (PAL["warning"] if score_val >= 50 else PAL["danger"])
-        st.markdown(
-            f'<div style="text-align:center;"><span class="score-band" style="background:{hex_to_rgba(band_color,0.12)};'
-            f'color:{band_color}; border:1px solid {hex_to_rgba(band_color,0.35)};">{band}</span></div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    gauge_defs = [
-        ("uauc_closure_pct", "UA/UC Closure %", PAL["success"], "%"),
-        ("worker_participation", "Worker Participation %", PAL["primary-2"], "%"),
-        ("energy_intensity", "Energy Intensity", "#6D28D9", ""),
-    ]
-    for col, (key, label, color, suffix) in zip([gauge_col1, gauge_col2, gauge_col3], gauge_defs):
+    top_cols = numeric_cols[:5]
+    tiles = st.columns(len(top_cols)) if top_cols else []
+    for i, (col, name) in enumerate(zip(tiles, top_cols)):
+        series = coerce_numeric(work[name]).dropna()
+        total = series.sum() if len(series) else None
+        avg = series.mean() if len(series) else None
         with col:
-            st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-            actual = kpis.get(key, {}).get(selected_month)
-            target = fy_target(kpis, key, months_upto, exclude_current=selected_month)
-            display_actual = actual * 100 if (key in PERCENT_KPIS and not is_missing(actual)) else actual
-            display_target = target * 100 if (key in PERCENT_KPIS and not is_missing(target)) else target
-            st.plotly_chart(make_gauge(display_actual, display_target, f"{label} · Target = FY Avg", color, suffix),
-                             use_container_width=True, config={"displayModeBar": False})
-            st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"""
+                <div class="exec-card" style="border-left:4px solid {accent_for_index(i)}; padding:14px 16px;">
+                    <div class="kpi-label" style="margin-bottom:2px;">{name}</div>
+                    <div class="kpi-value" style="font-size:22px;">{fmt_number(total)}</div>
+                    <div class="kpi-compare">Average: {fmt_number(avg)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-    trend_col1, trend_col2 = st.columns([1.15, 1])
-    with trend_col1:
-        st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-        st.plotly_chart(
-            make_multiline_chart(kpis, months_upto, [
-                ("lti", "LTI", "#E8590C"), ("tra", "TRA", PAL["warning"]),
-                ("first_aid", "First Aid", "#D97706"), ("near_miss", "Near Miss", "#CA8A04"),
-            ], "Safety Incident Trend · FY To-Date", yaxis_title="Count"),
-            use_container_width=True, config={"displayModeBar": False},
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
 
-    with trend_col2:
-        st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-        safety_count_keys = ["fatalities", "lti", "tra", "first_aid", "near_miss"]
-        current_counts = [kpis.get(k, {}).get(selected_month) or 0 for k in safety_count_keys]
-        previous_counts = ([kpis.get(k, {}).get(prev_month) or 0 for k in safety_count_keys] if prev_month else [0] * len(safety_count_keys))
-        st.plotly_chart(
-            make_mom_bar_chart(["Fatalities", "LTI", "TRA", "First Aid", "Near Miss"],
-                                current_counts, previous_counts, selected_month, prev_month or "N/A"),
-            use_container_width=True, config={"displayModeBar": False},
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
+def render_trend_charts(df, numeric_cols, date_col):
+    st.markdown('<div class="section-label">KPI Trends</div>', unsafe_allow_html=True)
 
-    env_col1, env_col2, env_col3 = st.columns(3)
-    env_defs = [
-        ("energy_intensity", "Energy Intensity", "#6D28D9", "kWh/t"),
-        ("water_intensity", "Water Intensity", "#0369A1", "m³/t"),
-        ("waste_intensity", "Waste Intensity", "#0F766E", "kg/t"),
-    ]
-    for col, (key, label, color, unit) in zip([env_col1, env_col2, env_col3], env_defs):
-        with col:
-            st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-            st.plotly_chart(make_single_trend_chart(kpis, months_upto, key, label, color, unit),
-                             use_container_width=True, config={"displayModeBar": False})
-            st.markdown("</div>", unsafe_allow_html=True)
+    if not date_col:
+        st.info("No date/period column was detected — trend charts require a time axis.")
+        return
+    if not numeric_cols:
+        st.info("No numeric KPI columns were detected to plot.")
+        return
 
+    work = df[[date_col] + numeric_cols].copy()
+    work[date_col] = coerce_date(work[date_col])
+    work = work.dropna(subset=[date_col]).sort_values(date_col)
+    if work.empty:
+        st.info("Date column could not be parsed into valid dates.")
+        return
+
+    chart_cols = numeric_cols[:6]
+    n_per_row = 2
+    for i in range(0, len(chart_cols), n_per_row):
+        row_metrics = chart_cols[i:i + n_per_row]
+        cols = st.columns(len(row_metrics))
+        for col, metric in zip(cols, row_metrics):
+            y = coerce_numeric(work[metric])
+            fig = go.Figure()
+            accent = accent_for_index(chart_cols.index(metric))
+            fig.add_trace(go.Scatter(
+                x=work[date_col], y=y, mode="lines+markers", fill="tozeroy",
+                line=dict(color=accent, width=2.4, shape="spline"),
+                fillcolor=accent + "22",
+                marker=dict(size=6, line=dict(width=1, color=PAL["surface"])),
+                connectgaps=True, name=metric,
+            ))
+            apply_enterprise_layout(fig, height=280, title=metric, legend=False)
+            with col:
+                st.markdown('<div class="exec-card">', unsafe_allow_html=True)
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+                st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_category_breakdown(df, numeric_cols, category_cols):
+    if not category_cols or not numeric_cols:
+        return
+    st.markdown('<div class="section-label">Category / Region Breakdown</div>', unsafe_allow_html=True)
+
+    cat_col = category_cols[0]
+    metric_col = numeric_cols[0]
+
+    grouped = (
+        df[[cat_col, metric_col]]
+        .assign(**{metric_col: coerce_numeric(df[metric_col])})
+        .dropna()
+        .groupby(cat_col, as_index=False)[metric_col]
+        .sum()
+        .sort_values(metric_col, ascending=False)
+    )
+    if grouped.empty:
+        st.info("No usable category data to break down.")
+        return
+
+    fig = go.Figure(go.Bar(
+        x=grouped[cat_col], y=grouped[metric_col],
+        marker_color=PAL["primary"], marker_line_width=0,
+    ))
+    apply_enterprise_layout(fig, height=340, title=f"{metric_col} by {cat_col}", legend=False)
     st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-    st.plotly_chart(make_production_chart(kpis, months_upto), use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.markdown("</div>", unsafe_allow_html=True)
 
-    render_cumulative_summaries(kpis, months_upto, selected_month, prev_month, selected_fy)
 
-
-def render_cumulative_summaries(kpis, months_upto, selected_month, prev_month, selected_fy):
-    st.markdown('<div class="section-label">FY Cumulative Statistics &amp; Category Summaries</div>', unsafe_allow_html=True)
-    sum_col1, sum_col2, sum_col3 = st.columns(3)
-
-    with sum_col1:
-        st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-        st.markdown('<div class="kpi-label" style="margin-bottom:10px;">🦺 Safety Summary (FY-to-Date)</div>', unsafe_allow_html=True)
-        for label, val in [
-            ("Fatalities", fmt_count(fy_sum(kpis, "fatalities", months_upto))),
-            ("LTI", fmt_count(fy_sum(kpis, "lti", months_upto))),
-            ("TRA", fmt_count(fy_sum(kpis, "tra", months_upto))),
-            ("First Aid", fmt_count(fy_sum(kpis, "first_aid", months_upto))),
-            ("Near Miss", fmt_count(fy_sum(kpis, "near_miss", months_upto))),
-            ("Avg UA/UC Closure", fmt_percent(fy_avg(kpis, "uauc_closure_pct", months_upto))),
-            ("Avg Worker Participation", fmt_percent(fy_avg(kpis, "worker_participation", months_upto))),
-        ]:
-            st.markdown(f'<div class="stat-mini"><span class="stat-label">{label}</span><span class="stat-value">{val}</span></div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with sum_col2:
-        st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-        st.markdown('<div class="kpi-label" style="margin-bottom:10px;">🌱 Environment Summary (FY-to-Date)</div>', unsafe_allow_html=True)
-        for label, val, unit in [
-            ("Avg Energy Intensity", fmt_decimal(fy_avg(kpis, "energy_intensity", months_upto)), "kWh/t"),
-            ("Avg Water Intensity", fmt_decimal(fy_avg(kpis, "water_intensity", months_upto)), "m³/t"),
-            ("Avg Waste Intensity", fmt_decimal(fy_avg(kpis, "waste_intensity", months_upto)), "kg/t"),
-        ]:
-            st.markdown(f'<div class="stat-mini"><span class="stat-label">{label}</span><span class="stat-value">{val} <span style="color:var(--text-lo); font-size:11px;">{unit}</span></span></div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with sum_col3:
-        st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-        st.markdown('<div class="kpi-label" style="margin-bottom:10px;">🏭 Production Summary (FY-to-Date)</div>', unsafe_allow_html=True)
-        total_prod = fy_sum(kpis, "production_volume", months_upto)
-        avg_prod = fy_avg(kpis, "production_volume", months_upto)
-        mom_current = kpis.get("production_volume", {}).get(selected_month)
-        mom_prev = kpis.get("production_volume", {}).get(prev_month) if prev_month else None
-        _, prod_arrow, prod_delta = compute_trend("production_volume", mom_current, mom_prev)
-        for label, val, unit in [
-            ("Total Production (FY)", fmt_decimal(total_prod), "t (Metric)"),
-            ("Avg Monthly Production", fmt_decimal(avg_prod), "t (Metric)"),
-            (f"MoM Change ({prod_arrow})", prod_delta, ""),
-        ]:
-            st.markdown(f'<div class="stat-mini"><span class="stat-label">{label}</span><span class="stat-value">{val} <span style="color:var(--text-lo); font-size:11px;">{unit}</span></span></div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    st.caption(
-        f"Executive Dashboard reflects FY {selected_fy} data from '{months_upto[0]}' through "
-        f"'{selected_month}' ({len(months_upto)} month(s)) · Sourced live from the same GitHub RAW "
-        f"workbook and cache as the KPI cards above · Auto-refreshes every {CACHE_TTL_SECONDS // 60} minutes, "
-        f"or instantly via the Refresh Data button."
-    )
+def render_data_table(df):
+    with st.expander("📄 View Raw Data Table", expanded=False):
+        st.dataframe(df, use_container_width=True, height=420)
 
 
 # =============================================================================
-# 10. MAIN APP FLOW
+# 7. MAIN APP FLOW
 # =============================================================================
 def main():
-    render_sidebar()
+    source_url = render_sidebar(GITHUB_RAW_URL_DEFAULT)
 
-    # ---- Loading skeleton + data fetch -------------------------------------
+    if not source_url:
+        st.warning("Please provide a GitHub RAW Excel URL in the sidebar.")
+        st.stop()
+
     skeleton_placeholder = st.empty()
     with skeleton_placeholder.container():
         st.markdown('<div class="section-label">Key Performance Indicators</div>', unsafe_allow_html=True)
@@ -1071,27 +579,16 @@ def main():
             with c:
                 st.markdown('<div class="skel-card"></div>', unsafe_allow_html=True)
 
-    parsed, load_error = None, None
+    sheets, load_error = None, None
     with st.spinner("⏳ Fetching latest KPI data from GitHub..."):
         try:
-            # Phase 4 §2: resolves to an auto-detected "latest*.xlsx" file if
-            # config.GITHUB_DATA_FOLDER is set; otherwise returns GITHUB_RAW_URL
-            # unchanged (current single-file behaviour, fully backward compatible).
-            resolved_url = dp.resolve_latest_file_url(GITHUB_RAW_URL)
-            etag_key = get_remote_etag(resolved_url)
-            # Phase 4 §1: wraps the EXISTING cached fetch_workbook_bytes with a
-            # last-known-good fallback snapshot if the live fetch fails.
-            wb_bytes, fetch_meta = dp.fetch_workbook_hardened(resolved_url, etag_key, fetch_workbook_bytes)
-            # Phase 4 §1: schema/data validation layer (missing sheet / missing
-            # KPI row detection) — runs alongside, does not alter parse_workbook.
-            schema_issues = dp.validate_schema(wb_bytes)
-            parsed = parse_workbook(wb_bytes)
-            parsed["fetch_meta"] = fetch_meta
-            parsed["schema_issues"] = schema_issues
+            cache_key = get_remote_cache_key(source_url)
+            wb_bytes = fetch_workbook_bytes(source_url, cache_key)
+            sheets = load_all_sheets(wb_bytes)
+            if not sheets:
+                load_error = "The workbook was read successfully but contains no usable data."
         except requests.RequestException as e:
             load_error = f"Could not reach the GitHub RAW URL. Please check your network / URL. Details: {e}"
-        except ValueError as e:
-            load_error = f"Workbook structure issue: {e}"
         except Exception as e:
             load_error = f"Unexpected error while loading the workbook: {e}"
 
@@ -1100,43 +597,58 @@ def main():
     if load_error:
         st.error(f"⚠️ {load_error}")
         st.info(
-            "Verify that `GITHUB_RAW_URL` (config.py / GNSC_GITHUB_RAW_URL env var) points to a valid, "
-            "publicly accessible RAW Excel file, and that the workbook contains the "
-            "'H&S' and 'Environment' sheets. No cached fallback snapshot was available either."
+            "Verify the GitHub RAW URL points to a valid, publicly accessible "
+            "Excel (.xlsx) file with at least one non-empty sheet."
         )
         st.stop()
 
-    fy_label = parsed["fy_label"]
-    kpis = parsed["kpis"]
-
-    # Phase 4 §1: surface fallback / validation warnings without touching
-    # any existing rendering logic below.
-    if parsed["fetch_meta"].get("warning"):
-        st.warning(f"⚠️ {parsed['fetch_meta']['warning']}")
-    if parsed["schema_issues"]:
-        with st.expander(f"⚠️ Data validation found {len(parsed['schema_issues'])} issue(s)", expanded=False):
-            for issue in parsed["schema_issues"]:
-                st.markdown(f"- {issue}")
-
-    # ---- Sidebar filters that depend on parsed data ------------------------
+    # ---- Sidebar: sheet selector + filters ---------------------------------
     with st.sidebar:
-        selected_fy = st.selectbox("Financial Year", options=[fy_label], index=0)
-        selected_month = st.selectbox("Month", options=MONTH_ORDER, index=0)
-        selected_bu = st.selectbox("Business Unit (BU)", options=["All"], index=0)
-        selected_plant = st.selectbox("Plant", options=[COMPANY_NAME], index=0)
+        sheet_names = list(sheets.keys())
+        selected_sheet = st.selectbox("Sheet", options=sheet_names, index=0)
 
-        st.markdown(
-            """<div class="sb-footnote">ℹ️ This workbook contains a single site/BU.
-            BU and Plant filters will actively segment KPIs once multi-site data is available.</div>""",
-            unsafe_allow_html=True,
-        )
+    df_raw = sheets[selected_sheet]
+    date_cols, numeric_cols, category_cols = infer_columns(df_raw)
+    primary_date_col = date_cols[0] if date_cols else None
+
+    df = df_raw.copy()
+
+    with st.sidebar:
+        # Date range filter (only if a date column was detected)
+        if primary_date_col:
+            parsed_dates = coerce_date(df[primary_date_col])
+            valid_dates = parsed_dates.dropna()
+            if not valid_dates.empty:
+                min_d, max_d = valid_dates.min().date(), valid_dates.max().date()
+                date_range = st.date_input("Date Range", value=(min_d, max_d), min_value=min_d, max_value=max_d)
+                if isinstance(date_range, tuple) and len(date_range) == 2:
+                    start_d, end_d = date_range
+                    mask = parsed_dates.between(pd.Timestamp(start_d), pd.Timestamp(end_d))
+                    df = df[mask.fillna(False)]
+
+        # Category filters (auto-detected)
+        active_category_filters = {}
+        for cat_col in category_cols[:3]:
+            options = sorted([v for v in df_raw[cat_col].dropna().unique().tolist()])
+            if options:
+                selected_vals = st.multiselect(cat_col, options=options, default=options)
+                active_category_filters[cat_col] = selected_vals
+
         st.markdown('<div class="sb-section-title">🕒 &nbsp;Sync Status</div>', unsafe_allow_html=True)
         st.markdown(
-            f"""<div class="sb-footnote"><b style="color:var(--text-hi) !important;">Last refresh</b><br/>
-            {parsed['loaded_at']}<br/><br/>Auto-revalidates every {CACHE_TTL_SECONDS // 60} minutes, or
-            instantly via the Refresh Data button.</div>""",
+            f"""<div class="sb-footnote"><b style="color:var(--text-hi) !important;">Last checked</b><br/>
+            {datetime.now().strftime('%d %b %Y, %H:%M:%S')}<br/><br/>Auto-revalidates every
+            {CACHE_TTL_SECONDS // 60} minutes, or instantly via the Refresh Data button.</div>""",
             unsafe_allow_html=True,
         )
+
+    for cat_col, vals in active_category_filters.items():
+        if vals:
+            df = df[df[cat_col].isin(vals)]
+
+    if df.empty:
+        st.warning("No rows match the current filters. Try widening your selection.")
+        st.stop()
 
     # ---- Header --------------------------------------------------------------
     current_date_str = datetime.now().strftime("%A, %d %B %Y")
@@ -1147,70 +659,35 @@ def main():
                 <div class="app-header-icon">📊</div>
                 <div>
                     <h1>{COMPANY_NAME} Monthly KPI Dashboard</h1>
-                    <p>{PARENT_BRAND} · Health, Safety &amp; Environment Performance Overview</p>
+                    <p>{PARENT_BRAND} · Performance Overview — Sheet: {selected_sheet}</p>
                 </div>
             </div>
             <div class="app-header-right">
                 <div class="header-badge-row">
                     <div class="header-badge">📅 {current_date_str}</div>
-                    <div class="header-badge">FY {selected_fy} · {selected_month}</div>
+                    <div class="header-badge">{len(df)} row(s)</div>
                     <div class="header-badge live"><span class="dot"></span>Live</div>
                 </div>
-                <div class="header-meta">Last refreshed {parsed['loaded_at']}</div>
+                <div class="header-meta">Auto-refresh every {CACHE_TTL_SECONDS // 60} min</div>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # ---- Derived time windows --------------------------------------------
-    sel_idx = MONTH_ORDER.index(selected_month)
-    prev_month = MONTH_ORDER[sel_idx - 1] if sel_idx > 0 else None
-    window_months = MONTH_ORDER[max(0, sel_idx - 5): sel_idx + 1]
-    months_upto = MONTH_ORDER[: sel_idx + 1]
+    # ---- Sections -----------------------------------------------------------
+    render_executive_summary(df, numeric_cols, primary_date_col)
+    render_kpi_grid(df, numeric_cols, primary_date_col)
+    render_trend_charts(df, numeric_cols, primary_date_col)
+    render_category_breakdown(df, numeric_cols, category_cols)
+    render_data_table(df)
 
-    # Phase 4 §3 (perf): HSE score + anomaly scan now come from a cache
-    # layer SEPARATE from the raw-file/parsed-workbook caches, keyed off a
-    # hash of `kpis` so they only recompute when the data (or selected
-    # month) actually changes — not on every unrelated Streamlit rerun.
-    # compute_hse_score itself is passed in unchanged; its math is untouched.
-    kpi_hash = ke._stable_kpi_hash(kpis)
-    derivatives = ke.compute_kpi_derivatives(kpi_hash, kpis, compute_hse_score, tuple(months_upto), selected_month)
-    hse_score = derivatives["hse_score"]
-
-    role = st.session_state.get("view_role", config.DEFAULT_VIEW_ROLE)
-
-    # ---- Risk Panel (Phase 4 §4) — all roles ------------------------------
-    card_meta = {key: (label, formatter, unit) for key, label, icon, accent, formatter, unit in CARD_DEFS}
-    ke.render_risk_panel(kpis, selected_month, prev_month, months_upto, card_meta, derivatives)
-
-    # ---- Executive Summary strip ------------------------------------------
-    render_executive_summary(kpis, selected_month, prev_month, hse_score)
-
-    # ---- KPI Card Grid (bug-fixed rendering) -------------------------------
-    # Full KPI grid is most relevant to Plant Manager / EHS Head; Executive
-    # role already gets the condensed summary + risk panel above.
-    if role in ("Plant Manager", "EHS Head"):
-        st.markdown('<div class="section-label">Key Performance Indicators</div>', unsafe_allow_html=True)
-        render_kpi_grid(kpis, selected_month, prev_month, window_months, columns_per_row=4)
-
-        if prev_month:
-            st.caption(
-                f"Data source: GitHub RAW Excel workbook • Financial Year {selected_fy} • "
-                f"Values reflect the '{selected_month}' column of the source sheet, compared against '{prev_month}'."
-            )
-        else:
-            st.caption(
-                f"Data source: GitHub RAW Excel workbook • Financial Year {selected_fy} • "
-                f"Values reflect the '{selected_month}' column of the source sheet."
-            )
-
-    # ---- Executive Dashboard (gauges, trends, comparisons, cumulative) ----
-    render_executive_dashboard(kpis, selected_fy, selected_month, prev_month, months_upto, hse_score)
-
-    # ---- Audit Log (Phase 4 §5) — full detail for EHS Head only ----------
-    if role == "EHS Head":
-        ke.render_audit_log(parsed["fetch_meta"], selected_fy, selected_month)
+    st.caption(
+        f"Data source: GitHub RAW Excel workbook · Sheet '{selected_sheet}' · "
+        f"Detected {len(date_cols)} date column(s), {len(numeric_cols)} numeric column(s), "
+        f"{len(category_cols)} category column(s). Auto-refreshes every {CACHE_TTL_SECONDS // 60} "
+        f"minutes, or instantly via the Refresh Data button."
+    )
 
 
 if __name__ == "__main__":
