@@ -1,7 +1,6 @@
-# app.py
 """
 Jubilant FoodWorks Limited — Modern Enterprise Analytics Portal.
-100% Data-driven architecture deriving parameters directly from Excel structural taxonomy.
+100% Data-driven architecture driven entirely by metadata structure definitions.
 """
 import re
 import time
@@ -61,7 +60,7 @@ def compute_hse_score_dynamic(kpi_dict: dict, periods_list: list, target_period:
         final_score = max(0.0, min(100.0, base_score * (0.6 + (0.4 * closure_rate))))
         return round(final_score, 1)
     except Exception as e:
-        logger.error(f"Dynamic safety evaluation calculation exception: {e}")
+        logger.error(f"Safety matrix score calculation error intercept: {e}")
         return 100.0
 
 def get_remote_cache_key(url: str) -> str:
@@ -81,12 +80,9 @@ def fetch_workbook_bytes(url: str, cache_key: str) -> bytes:
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def load_all_sheets_raw(file_bytes: bytes) -> dict:
-    """Restored to explicitly satisfy structural architecture requirements and prevent NameErrors."""
-    import openpyxl
-    wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
+    sheets = pd.read_excel(BytesIO(file_bytes), sheet_name=None, engine="openpyxl")
     cleaned = {}
-    for name in wb.sheetnames:
-        df = pd.read_excel(BytesIO(file_bytes), sheet_name=name, engine="openpyxl")
+    for name, df in sheets.items():
         if df is None or df.empty: continue
         cleaned[name] = df.dropna(axis=0, how="all")
     return cleaned
@@ -242,7 +238,7 @@ def main():
     fetch_meta = {"source": "live", "fetched_at": "—", "source_url": config.GITHUB_RAW_URL_OVERRIDE, "warning": None}
     schema_warnings = []
 
-    with st.spinner("⏳ Processing master analytical pipeline..."):
+    with st.spinner("⏳ Processing analytical data infrastructure..."):
         try:
             target_endpoint = resolve_latest_file_url(config.GITHUB_RAW_URL_OVERRIDE)
             cache_sig = get_remote_cache_key(target_endpoint)
@@ -263,6 +259,7 @@ def main():
         st.error(f"⚠️ Critical Ingestion Failure: {load_error}")
         st.stop()
 
+    # STEP 4: Build normalized dataframe using metadata-driven openpyxl parser engine
     meta_bundle = infer_and_melt_workbook_metadata(raw_bytes)
     df_long = meta_bundle["long_df"]
     catalog = meta_bundle["catalog"]
@@ -270,12 +267,14 @@ def main():
     units_registry = meta_bundle["units"]
 
     if df_long.empty:
-        st.error("⚠️ Zero entries parsed from current data layout.")
+        st.error("⚠️ Zero records extracted from data layouts.")
         st.stop()
 
+    # STEP 6: Step 6 Debug verification view block pass
     st.markdown('<div class="section-label">⚙️ Pipeline Debug Layer (Step 6 Verification Table Matrix)</div>', unsafe_allow_html=True)
-    st.dataframe(df_long, use_container_width=True, height=220)
+    st.dataframe(df_long, use_container_width=True, height=200)
 
+    # STEP 7: Strict Navigation Category Tree Controls Slicing
     with st.sidebar:
         nav_menu_options = [
             "Executive Overview", 
@@ -290,6 +289,7 @@ def main():
         idx = timeline_periods.index(selected_period)
         previous_period = timeline_periods[idx - 1] if idx > 0 else None
 
+    # STEP 7: Category alignment slicing rule logic
     if selected_page != "Executive Overview":
         df_page_filtered = df_long[df_long["Category"] == selected_page]
     else:
@@ -309,9 +309,6 @@ def main():
     )
 
     current_date_str = datetime.now().strftime("%A, %d %B %Y")
-    status_marker = "Synchronized" if fetch_meta.get("source") == "live" else "Snapshot Active"
-    status_color = "var(--success)" if fetch_meta.get("source") == "live" else "var(--warning)"
-    
     st.markdown(f"""
         <div class="app-header">
             <div class="app-header-left">
@@ -330,7 +327,7 @@ def main():
     """, unsafe_allow_html=True)
 
     if selected_page == "Executive Overview":
-        st.markdown('<div class="section-label">Enterprise High-Level Executive Status & Alert Summaries</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-label">Enterprise High-Level Executive Status Summary & Compliance Alerts</div>', unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary);"><div class="kpi-top-row"><div class="kpi-icon-badge">🎯</div><div class="kpi-trend-pill flat">HSE Index</div></div><div class="kpi-value">{derivatives['hse_score']} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">/ 100</span></div><div class="kpi-label">Dynamic Safety Rating Score Index</div><div class="kpi-compare">Timeline Period Focus: <b>{selected_period}</b></div></div>""", unsafe_allow_html=True)
@@ -346,7 +343,7 @@ def main():
 
         render_risk_panel_dynamic(kpi_dict_payload, selected_period, timeline_periods, derivatives, units_registry)
         
-        st.markdown('<div class="section-label">Unified Structural Domain Status Matrices</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-label">Unified Structural Domain Section Synopses</div>', unsafe_allow_html=True)
         cc1, cc2, cc3 = st.columns(3)
         with cc1:
             st.markdown('<div class="exec-card"><h6>⚡ Inferred Energy Section Status</h6>', unsafe_allow_html=True)
@@ -367,16 +364,26 @@ def main():
         render_audit_log_portal(fetch_meta, selected_period)
 
     else:
+        # STEP 8 & 9: Generate metadata-driven pages with engineering units matching Row 3 explicitly
         st.markdown(f'<div class="section-label">{selected_page} Management Framework Hub</div>', unsafe_allow_html=True)
         
-        cols = st.columns(min(len(unique_metrics), 4))
-        for i, metric in enumerate(unique_metrics[:4]):
-            m_subset = df_page_filtered[df_page_filtered["Metric"] == metric]
-            c_val = m_subset[m_subset["Period"] == selected_period]["Value"].iloc[0] if not m_subset[m_subset["Period"] == selected_period].empty else None
-            p_val = m_subset[m_subset["Period"] == previous_period]["Value"].iloc[0] if previous_period and not m_subset[m_subset["Period"] == previous_period].empty else None
-            with cols[i % 4]:
-                render_kpi_card_layout(metric, c_val, p_val, units_registry.get(metric, ""))
+        # Subsections dynamic discovery split pass
+        distinct_subcategories = df_page_filtered["Subcategory"].unique().tolist()
+        
+        for sub_cat in distinct_subcategories:
+            st.markdown(f'<div class="section-label">{sub_cat} Parameters Section</div>', unsafe_allow_html=True)
+            df_sub = df_page_filtered[df_page_filtered["Subcategory"] == sub_cat]
+            sub_metrics = df_sub["Metric"].unique().tolist()
+            
+            sub_cols = st.columns(min(len(sub_metrics), 4))
+            for i, metric in enumerate(sub_metrics[:4]):
+                m_subset = df_sub[df_sub["Metric"] == metric]
+                c_val = m_subset[m_subset["Period"] == selected_period]["Value"].iloc[0] if not m_subset[m_subset["Period"] == selected_period].empty else None
+                p_val = m_subset[m_subset["Period"] == previous_period]["Value"].iloc[0] if previous_period and not m_subset[m_subset["Period"] == previous_period].empty else None
+                with sub_cols[i % 4]:
+                    render_kpi_card_layout(metric, c_val, p_val, units_registry.get(metric, ""))
 
+        # STEP 8 & 9: Dynamic, data-driven charts rendering based on filtered records dataframe
         from charts.env_visuals import (
             render_waste_efficiency_hybrid_chart,
             render_waste_stream_stacked_chart,
@@ -384,7 +391,7 @@ def main():
             render_dynamic_hybrid_overlay,
             render_single_trajectory_area,
         )
-        st.markdown('<div class="section-label">Automatic Trend Projections Matrix</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-label">Automatic Trend Projections Axis Matrix</div>', unsafe_allow_html=True)
         if selected_page == "Waste":
             c_left, c_right = st.columns(2)
             with c_left:
@@ -404,8 +411,8 @@ def main():
             render_dynamic_hybrid_overlay(df_long, "⚡ Production Scale vs Direct Energy Consumption Footprint Profile", "Production Volume", "energy consumption", units_registry)
             st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown('<div class="section-label">Raw Data Table Explorer Pass</div>', unsafe_allow_html=True)
-        df_table_out = df_period_mask[["Category", "Subcategory", "Metric", "Value", "Unit"]].reset_index(drop=True)
+        st.markdown('<div class="section-label">Raw Segment Data Table Explorer</div>', unsafe_allow_html=True)
+        df_table_out = df_period_mask[["Subcategory", "Metric", "Value", "Unit"]].reset_index(drop=True)
         with st.expander("📄 Query Segment Database Records Grid", expanded=False):
             st.dataframe(df_table_out, use_container_width=True, height=280)
             csv_buffer = df_table_out.to_csv(index=False).encode('utf-8')
