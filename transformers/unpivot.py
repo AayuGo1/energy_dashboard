@@ -11,11 +11,6 @@ import config
 
 @st.cache_data(ttl=config.RAW_FILE_CACHE_TTL_SECONDS, show_spinner=False)
 def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
-    """
-    Metadata-driven discovery engine. Infers sections, units, metric names,
-    and groupings directly from the sheet row structural topologies.
-    Maps units extracted directly from Row 3 metadata boundaries.
-    """
     unified_records = []
     units_registry = {}
     metric_catalog = {}
@@ -27,8 +22,6 @@ def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
             continue
             
         df = df_raw.copy()
-        
-        # Isolate chronology timeline coordinates dynamically
         timeline_cols = []
         for col in df.columns:
             col_str = str(col)
@@ -39,11 +32,6 @@ def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
         if not text_cols:
             continue
 
-        # Extract explicit engineering unit tokens directly from row data definitions
-        # Row 0/1/2/3 inspection pass to intercept bracket arrays or target metadata row strings
-        row_list = df.values.tolist()
-        
-        # Map dynamic label indexing boundaries
         for idx, row_vec in df.iterrows():
             text_values = [str(row_vec[c]).strip() for c in text_cols if row_vec[c] is not None and str(row_vec[c]).strip().lower() not in ["nan", "none", ""]]
             if len(text_values) < 1:
@@ -53,11 +41,9 @@ def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
             if "monthly kpi" in metric_name.lower():
                 continue
                 
-            # Intercept custom engineering units from within bracket parameters exactly
             unit_match = re.search(r"\[(.*?)\]", metric_name)
             unit_str = unit_match.group(1) if unit_match else ""
             
-            # Fallback search parameters to sweep adjacent metadata layout definitions if blank
             if not unit_str:
                 for cell in row_vec:
                     if isinstance(cell, str) and any(u in cell for u in ["kWh", "m³", "kg", "t", "%", "hrs", "L", "MT"]):
@@ -69,7 +55,6 @@ def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
             primary_cat = text_values[0] if len(text_values) > 1 else sheet_name
             sub_cat = text_values[1] if len(text_values) > 2 else "General Operations"
             
-            # 100% Data-Driven categorization schema mapping paths
             inferred_page = "Executive Overview"
             m_lower = metric_name.lower()
             s_lower = sheet_name.lower()
