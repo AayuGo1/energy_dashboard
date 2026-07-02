@@ -76,7 +76,7 @@ def compute_portal_derivatives(payload_hash: str, kpi_dict: dict, periods_tuple:
     anomalies = detect_anomalies_dynamic(kpi_dict, periods_list, target_period)
     return {"hse_score": hse_score, "anomalies": anomalies}
 
-def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list, derivatives: dict):
+def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list, derivatives: dict, units_registry: dict):
     st.markdown('<div class="section-label">Exception Anomalies & Live Risk Panel Indicators</div>', unsafe_allow_html=True)
     red_alerts = []
     yellow_alerts = []
@@ -105,7 +105,8 @@ def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list,
         st.markdown('<div style="color: var(--danger); font-size: 13px; font-weight: 700; margin-bottom: 12px;">🚨 Critical Operational Breaches</div>', unsafe_allow_html=True)
         if red_alerts:
             for metric, val in red_alerts:
-                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric[:40]}</span><span class="stat-value" style="color: var(--danger);">{val:,.1f}</span></div>', unsafe_allow_html=True)
+                unit = units_registry.get(metric, "")
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric[:40]}</span><span class="stat-value" style="color: var(--danger);">{val:,.1f} {unit}</span></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="font-size: 12px; color: var(--text-lo);">Zero critical items flagged</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
@@ -115,7 +116,8 @@ def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list,
         st.markdown('<div style="color: var(--warning); font-size: 13px; font-weight: 700; margin-bottom: 12px;">⚠️ Threshold Boundaries Watchlist</div>', unsafe_allow_html=True)
         if yellow_alerts:
             for metric, val in yellow_alerts:
-                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric[:40]}</span><span class="stat-value" style="color: var(--warning);">{val:,.1f}</span></div>', unsafe_allow_html=True)
+                unit = units_registry.get(metric, "")
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric[:40]}</span><span class="stat-value" style="color: var(--warning);">{val:,.1f} {unit}</span></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="font-size: 12px; color: var(--text-lo);">Zero boundary warnings triggered</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
@@ -133,7 +135,7 @@ def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list,
         st.markdown('</div>', unsafe_allow_html=True)
 
 def render_risk_panel(kpi_dict: dict, selected_month: str, prev_month, months_upto: list, card_meta: dict, derivatives: dict):
-    render_risk_panel_dynamic(kpi_dict, selected_month, months_upto, derivatives)
+    render_risk_panel_dynamic(kpi_dict, selected_month, months_upto, derivatives, {})
 
 def render_audit_log(fetch_meta: dict, selected_fy: str, selected_month: str):
     st.markdown('<div class="section-label">Pipeline Operational Diagnostics Log</div>', unsafe_allow_html=True)
