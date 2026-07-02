@@ -1,4 +1,3 @@
-# data_pipeline.py
 """
 Data Pipeline Hardening Subsystem — Ingestion Framework with Safe Snapshots.
 Handles raw binary streaming from GitHub with robust local fallbacks.
@@ -10,7 +9,6 @@ import logging
 from io import BytesIO
 from datetime import datetime
 import requests
-from openpyxl import load_workbook
 import config
 
 def get_logger() -> logging.Logger:
@@ -78,6 +76,7 @@ def fetch_workbook_hardened(url: str, cache_key: str, _fetch_fn):
         raise
 
 def validate_schema(file_bytes: bytes) -> list:
+    from openpyxl import load_workbook
     issues = []
     try:
         wb = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
