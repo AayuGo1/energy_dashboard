@@ -53,6 +53,10 @@ def melt_wide_sheet_to_long_cached(df_raw: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(ttl=config.RAW_FILE_CACHE_TTL_SECONDS, show_spinner=False)
 def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
+    """
+    Metadata-driven discovery engine. Infers sections, units, metric names,
+    and groupings directly from the sheet structural topologies.
+    """
     unified_records = []
     units_registry = {}
     metric_catalog = {}
@@ -87,17 +91,18 @@ def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
             primary_cat = text_values[0] if len(text_values) > 1 else sheet_name
             sub_cat = text_values[1] if len(text_values) > 2 else "General Operations"
             
+            # Pure metadata-driven target categorization avoiding artificial placeholders
             inferred_page = "Executive Overview"
             m_lower = metric_name.lower()
             s_lower = sheet_name.lower()
             
-            if "health" in s_lower or "safety" in s_lower or "h&s" in s_lower or "injury" in m_lower or "fatal" in m_lower:
+            if "health" in s_lower or "safety" in s_lower or "h&s" in s_lower or "injury" in m_lower or "fatal" in m_lower or "accident" in m_lower or "near miss" in m_lower:
                 inferred_page = "Health & Safety"
             elif "energy" in m_lower or "diesel" in m_lower or "lpg" in m_lower or "electricity" in m_lower:
                 inferred_page = "Energy"
             elif "water" in m_lower or "withdrawal" in m_lower or "discharge" in m_lower:
                 inferred_page = "Water"
-            elif "waste" in m_lower or "landfill" in m_lower or "compost" in m_lower or "recycle" in m_lower:
+            elif "waste" in m_lower or "landfill" in m_lower or "compost" in m_lower or "recycle" in m_lower or "incineration" in m_lower:
                 inferred_page = "Waste"
             elif "production" in m_lower or "production" in primary_cat.lower() or "volume" in m_lower:
                 inferred_page = "Production"
