@@ -1,6 +1,5 @@
 """
 Plotly Analytics Charts — Sustainability Visual Systems Engine.
-Provides clean, responsive components completely driven by workbook metadata and units.
 """
 import plotly.graph_objects as go
 import pandas as pd
