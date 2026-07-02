@@ -1,6 +1,6 @@
 """
 Centralized Enterprise Configuration System for Jubilant FoodWorks Limited.
-Acts as the absolute single source of truth for branding, analytics architecture, and data pipelines.
+Absolute single source of truth for variables, telemetry paths, and runtime settings.
 """
 import os
 
@@ -13,6 +13,8 @@ DASHBOARD_TITLE = "Enterprise Analytics Portal"
 DASHBOARD_TITLE_SUB = "Executive Sustainability Analytics Platform"
 CURRENT_FISCAL_YEAR = "2026"
 SIDEBAR_LOGO_TEXT = "JFL-BI"
+PAGE_TITLE = f"{COMPANY_NAME} | Enterprise Portal"
+DEFAULT_PERIOD = "Global"
 
 # =============================================================================
 # DATA SOURCE PIPELINE PROPERTIES
@@ -28,6 +30,8 @@ GITHUB_RAW_URL_OVERRIDE = os.environ.get(
     "JFL_GITHUB_RAW_URL",
     "https://raw.githubusercontent.com/AayuGo1/energy_dashboard/main/Monthly%20KPI%20Summary%20Sheet_April_GNSC.xlsx",
 )
+# Alias assignment mapping to fulfill old or alternative naming targets natively
+GITHUB_EXCEL_URL = GITHUB_RAW_URL_OVERRIDE
 
 GITHUB_API_CONTENTS_URL = (
     f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{{path}}?ref={GITHUB_BRANCH}"
@@ -48,7 +52,20 @@ LOG_LEVEL = os.environ.get("JFL_LOG_LEVEL", "INFO")
 # =============================================================================
 # REQUIRED CORE SCHEMA VALIDATION METADATA
 # =============================================================================
-REQUIRED_SHEETS = ["Environment"]
+REQUIRED_SHEETS = ["H&S", "Environment"]
+REQUIRED_KPI_LABELS = {
+    "H&S": [
+        "Fatalities", "Lost Time Injury", "Total recordable accidents",
+        "First Aid Accident", "Near miss", "% of UA/UC Closure",
+        "Safety observation worker involvement % [%]",
+    ],
+    "Environment": [
+        "Total energy consumption [kWh/Gross Weight (t Metric)]",
+        "Total water withdrawal [m³/Gross Weight (t Metric)]",
+        "Total waste per t(Metrics) [kg/Gross Weight (t Metric)]",
+        "Production Volume - Gross Weight [Gross Weight (t Metric)]",
+    ],
+}
 
 # =============================================================================
 # RISK CONTROL PROFILE MATRIX DEFINITIONS
@@ -62,4 +79,5 @@ KPI_THRESHOLDS = {
     "first aid accident":    {"direction": "lower_better",  "red": 12,   "yellow": 6},
     "near miss":             {"direction": "lower_better",  "red": None, "yellow": None},
     "% of ua/uc closure":    {"direction": "higher_better", "red": 0.70, "yellow": 0.85},
+    "safety observation worker involvement % [%]": {"direction": "higher_better", "red": 0.60, "yellow": 0.80},
 }
