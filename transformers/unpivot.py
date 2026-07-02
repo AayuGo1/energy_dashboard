@@ -1,14 +1,13 @@
-# transformers/unpivot.py
 """
-Metadata-Driven Structural Workbook Ingestion Pipeline Subsystem.
-Strictly extracts hierarchies from Columns B, C, and D, and units from Row 3.
-Zero hardcoded keyword or metric matching.
+Metadata-Driven Layout Transformer Subsystem.
+Restores both normalized and unpivoted structural dataframe parsers for absolute backward compatibility.
 """
 import re
 from io import BytesIO
 import numpy as np
 import pandas as pd
 import openpyxl
+import streamlit as st
 import config
 
 def _clean_string(val) -> str:
@@ -26,22 +25,46 @@ def _parse_numeric(val) -> float:
     except (ValueError, TypeError):
         return np.nan
 
-def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
-    """
-    Parses workbook worksheets via openpyxl by doing strict geometric cell coordinate lookups.
-    Enforces a metadata-driven structure without hardcoding any keyword comparisons.
-    
-    Structure extracted per metric row:
-      - Category: Column B (Forward-filled)
-      - Subcategory: Column C (Forward-filled)
-      - Metric: Column D
-      - Unit: Row 3 (Mapped per data column index)
-      - Month columns: Inferred dynamically from Row 2 or Row 3 date strings.
-    """
-    if isinstance(file_bytes, dict):
-        # If a dictionary of dataframes is passed instead of raw bytes, gracefully handle it
-        raise TypeError("infer_and_melt_workbook_metadata expects raw file bytes to process row-level openpyxl geometry structures.")
+@st.cache_data(ttl=config.RAW_FILE_CACHE_TTL_SECONDS, show_spinner=False)
+def melt_wide_sheet_to_long_cached(df_raw: pd.DataFrame) -> pd.DataFrame:
+    """Legacy unpivot parsing routine preserved to fulfill historic application calls."""
+    timeline_cols = []
+    pattern = re.compile(r"(2025|2026|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|Jan|Feb|Mar)", re.IGNORECASE)
+    for col in df_raw.columns:
+        col_str = str(col)
+        if pattern.search(col_str):
+            if "YTD" not in col_str and "Target" not in col_str:
+                timeline_cols.append(col)
 
+    label_col = None
+    for col in df_raw.columns:
+        sample = df_raw[col].dropna().astype(str).tolist()
+        if any(any(k in s for k in ["Volume", "Fatalities", "waste", "Usage", "consumption", "withdrawal"]) for s in sample):
+            label_col = col
+            break
+    if label_col is None:
+        label_col = df_raw.columns[2] if len(df_raw.columns) > 2 else df_raw.columns[0]
+
+    records = []
+    raw_records = df_raw[[label_col] + timeline_cols].to_dict(orient="records")
+    for row in raw_records:
+        metric_raw = str(row[label_col]).strip()
+        if not metric_raw or metric_raw.lower() in ["nan", "none", "environment monthly kpi"]:
+            continue
+        for period in timeline_cols:
+            val = row[period]
+            v_num = _parse_numeric(val)
+            period_str = str(period).split(" ")[0] if "-" in str(period) else str(period)
+            records.append({
+                "Metric": metric_raw,
+                "Month": period_str,
+                "Value": v_num
+            })
+    return pd.DataFrame(records)
+
+@st.cache_data(ttl=config.RAW_FILE_CACHE_TTL_SECONDS, show_spinner=False)
+def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
+    """Modern data-driven coordinate structure discovery parser."""
     wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
     all_records = []
     units_registry = {}
@@ -57,17 +80,14 @@ def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
         if max_row < 4 or max_column < 5:
             continue
 
-        # Extract headers from rows 2 and 3
         row2 = [ws.cell(row=2, column=c).value for c in range(1, max_column + 1)]
         row3 = [ws.cell(row=3, column=c).value for c in range(1, max_column + 1)]
 
-        # Forward-fill headers across merged ranges to ensure consistent indexing
         for c in range(1, len(row2)):
             if row2[c] is None: row2[c] = row2[c-1]
         for c in range(1, len(row3)):
             if row3[c] is None: row3[c] = row3[c-1]
 
-        # Map monthly reporting windows and target metrics columns dynamically
         timeline_mapping = {}
         target_col_idx = None
         ytd_col_idx = None
@@ -92,7 +112,6 @@ def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
         if not timeline_mapping:
             continue
 
-        # Positional tracking for structural forward-fill logic execution
         current_category = ""
         current_subcategory = ""
 
@@ -101,7 +120,6 @@ def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
             cell_c = ws.cell(row=r, column=3).value
             cell_d = ws.cell(row=r, column=4).value
 
-            # Forward-fill category and subcategory hierarchies natively
             if cell_b is not None and _clean_string(cell_b) != "": 
                 current_category = str(cell_b).strip()
             if cell_c is not None and _clean_string(cell_c) != "": 
@@ -112,7 +130,6 @@ def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
                 
             metric_name = str(cell_d).strip()
 
-            # Dynamic Row 3 explicit engineering unit mapping extraction pass
             inferred_unit = ""
             for c_idx in timeline_mapping.keys():
                 unit_candidate = _clean_string(row3[c_idx-1])
@@ -128,12 +145,10 @@ def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
 
             units_registry[metric_name] = inferred_unit
 
-            # Pull non-timeline structural summary indicators
             target_val = _parse_numeric(ws.cell(row=r, column=target_col_idx).value) if target_col_idx else np.nan
             ytd_val = _parse_numeric(ws.cell(row=r, column=ytd_col_idx).value) if ytd_col_idx else np.nan
             mtd_val = _parse_numeric(ws.cell(row=r, column=mtd_col_idx).value) if mtd_col_idx else np.nan
 
-            # Unpivot monthly value coordinates into normalized relational rows
             for col_idx, period_label in timeline_mapping.items():
                 numeric_val = _parse_numeric(ws.cell(row=r, column=col_idx).value)
                 
@@ -170,7 +185,7 @@ def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
         distinct_categories = df_long["Category"].unique().tolist()
         for cat in distinct_categories:
             catalog_tree[cat] = sorted(df_long[df_long["Category"] == cat]["Metric"].unique().tolist())
-        sorted_periods = sorted(df_long["Month"].unique().tolist(), key=lambda x: ("26" in str(x) or "2026" in str(x), x))
+        sorted_periods = sorted(df_long["Month"].unique().tolist(), key=lambda x: ("2026" in str(x), x))
     else:
         sorted_periods = []
 
