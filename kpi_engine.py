@@ -1,8 +1,13 @@
+# kpi_engine.py
 """
-KPI Core Engine Subsystem — Contains synchronized implementations for analytical tracking.
+KPI Core Engine Subsystem — Metadata-driven Analytical Calculations.
+Computes real-time aggregates, sequential month-over-month variances, 
+and risk control alerts over a normalized, data-driven framework.
 """
 import json
 import hashlib
+import numpy as np
+import pandas as pd
 import streamlit as st
 import config
 
@@ -14,7 +19,11 @@ def _stable_kpi_hash(kpis: dict) -> str:
     return hashlib.md5(payload.encode()).hexdigest()
 
 def get_kpi_status_dynamic(metric_name: str, value) -> str:
-    if value is None or str(value).strip() == "" or value == "N/A":
+    """
+    Evaluates risk alert status (red, yellow, green, na) dynamically
+    by scanning the standardized config thresholds registry matrix.
+    """
+    if value is None or str(value).strip() == "" or value == "N/A" or pd.isna(value):
         return "na"
     norm_key = metric_name.lower().strip()
     cfg = None
@@ -40,6 +49,10 @@ def get_kpi_status_dynamic(metric_name: str, value) -> str:
         return "green"
 
 def detect_anomalies_dynamic(kpi_dict: dict, periods: list, target_period: str) -> list:
+    """
+    Scans sequential month-over-month performance variations to isolate extreme changes
+    breaking the boundary percentage threshold parameters.
+    """
     if len(periods) < 2 or target_period not in periods:
         return []
     idx = periods.index(target_period)
@@ -49,7 +62,7 @@ def detect_anomalies_dynamic(kpi_dict: dict, periods: list, target_period: str) 
     for metric_name, timeline_vals in kpi_dict.items():
         cur = timeline_vals.get(target_period)
         prev = timeline_vals.get(prev_period)
-        if cur is None or prev is None:
+        if cur is None or prev is None or pd.isna(cur) or pd.isna(prev):
             continue
         try:
             cur, prev = float(cur), float(prev)
@@ -70,26 +83,42 @@ def detect_anomalies_dynamic(kpi_dict: dict, periods: list, target_period: str) 
 
 @st.cache_data(ttl=config.KPI_CACHE_TTL_SECONDS, show_spinner=False)
 def compute_portal_derivatives(payload_hash: str, kpi_dict: dict, periods_tuple: tuple, target_period: str, _hse_score_fn):
+    """
+    Calculates primary derived summaries and caches processing calculations 
+    to preserve downstream execution performance from redundant recalculations.
+    """
     periods_list = list(periods_tuple)
     hse_score = _hse_score_fn(kpi_dict, periods_list, target_period)
     anomalies = detect_anomalies_dynamic(kpi_dict, periods_list, target_period)
     return {"hse_score": hse_score, "anomalies": anomalies}
 
 def compute_kpi_derivatives(payload_hash: str, kpi_dict: dict, _hse_score_fn, periods_tuple: tuple, target_period: str):
-    """Alias for backwards compatibility synchronization with app layers."""
+    """
+    Public signature alignment passthrough to preserve application orchestration boundaries.
+    """
     return compute_portal_derivatives(payload_hash, kpi_dict, periods_tuple, target_period, _hse_score_fn)
 
 def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list, derivatives: dict, units_registry: dict):
-    st.markdown('<div class="section-label">Exception Anomalies & Live Risk Panel Indicators</div>', unsafe_allow_html=True)
+    """
+    Generates the premium executive alert panel container displaying threshold violations 
+    and anomalous structural period variance swings.
+    """
     red_alerts = []
     yellow_alerts = []
     for metric_name, timeline in kpi_dict.items():
         v = timeline.get(target_period)
-        status = get_kpi_status_dynamic(metric_name, v)
+        # Re-map programmatic lowercase key indicators back to clean uppercase presentation forms
+        display_name = metric_name.capitalize()
+        for k in units_registry.keys():
+            if k.lower().strip() == metric_name.lower().strip():
+                display_name = k
+                break
+                
+        status = get_kpi_status_dynamic(display_name, v)
         if status == "red":
-            red_alerts.append((metric_name, v))
+            red_alerts.append((display_name, v))
         elif status == "yellow":
-            yellow_alerts.append((metric_name, v))
+            yellow_alerts.append((display_name, v))
             
     anomalies = derivatives.get("anomalies", [])
 
@@ -109,7 +138,7 @@ def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list,
         if red_alerts:
             for metric, val in red_alerts:
                 unit = units_registry.get(metric, "")
-                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric[:40]}</span><span class="stat-value" style="color: var(--danger);">{val:,.1f} {unit}</span></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric[:40]}</span><span class="stat-value" style="color: var(--danger);">{fmt_number(val)} {unit}</span></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="font-size: 12px; color: var(--text-lo);">Zero critical items flagged</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
@@ -120,7 +149,7 @@ def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list,
         if yellow_alerts:
             for metric, val in yellow_alerts:
                 unit = units_registry.get(metric, "")
-                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric[:40]}</span><span class="stat-value" style="color: var(--warning);">{val:,.1f} {unit}</span></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric[:40]}</span><span class="stat-value" style="color: var(--warning);">{fmt_number(val)} {unit}</span></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="font-size: 12px; color: var(--text-lo);">Zero boundary warnings triggered</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
@@ -130,27 +159,42 @@ def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list,
         st.markdown(f'<div style="color: var(--primary); font-size: 13px; font-weight: 700; margin-bottom: 12px;">📊 Timeline Volume Deviations (MoM ≥ {config.ANOMALY_PCT_THRESHOLD:.0f}%)</div>', unsafe_allow_html=True)
         if anomalies:
             for a in anomalies[:5]:
+                raw_key = a["key"]
+                display_name = raw_key.capitalize()
+                for k in units_registry.keys():
+                    if k.lower().strip() == raw_key.lower().strip():
+                        display_name = k
+                        break
                 arrow = "▲" if a["direction"] == "spike" else "▼"
-                color = "var(--danger)" if a["direction"] == "spike" and "waste" in a["metric"].lower() else "var(--primary)"
-                st.markdown(f'<div class="stat-mini"><span class="stat-label">{a["metric"][:40]}</span><span class="stat-value" style="color: {color};">{arrow} {a["pct_change"]:+.1f}%</span></div>', unsafe_allow_html=True)
+                color = "var(--danger)" if a["direction"] == "spike" and "waste" in raw_key.lower() else "var(--primary)"
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{display_name[:40]}</span><span class="stat-value" style="color: {color}; font-weight: 700;">{arrow} {a["pct_change"]:+.1f}%</span></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="font-size: 12px; color: var(--text-lo);">Zero extreme variations observed</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-def render_risk_panel(kpi_dict: dict, selected_month: str, prev_month, months_upto: list, card_meta: dict, derivatives: dict):
-    render_risk_panel_dynamic(kpi_dict, selected_month, months_upto, derivatives, {})
-
-def render_audit_log(fetch_meta: dict, selected_fy: str, selected_month: str):
-    st.markdown('<div class="section-label">Pipeline Operational Diagnostics Log</div>', unsafe_allow_html=True)
+def render_audit_log_portal(fetch_meta: dict, current_period: str):
+    """
+    Renders diagnostic ingestion metadata trail profiles directly 
+    from system execution tracking states.
+    """
+    st.markdown('<div class="section-label">Pipeline Operational Diagnostics Log & Telemetry Audit Trail</div>', unsafe_allow_html=True)
     st.markdown('<div class="exec-card">', unsafe_allow_html=True)
     source_badge = "🟢 Live Production Feed" if fetch_meta.get("source") == "live" else "⚠️ Disconnected Snapshot Backup Layer"
     st.markdown(f'<div class="stat-mini"><span class="stat-label">System Feed Profile</span><span class="stat-value">{source_badge}</span></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="stat-mini"><span class="stat-label">Refresh Execution Timestamp</span><span class="stat-value">{fetch_meta.get("fetched_at", "N/A")}</span></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="stat-mini"><span class="stat-label">Active Audit Boundary Target</span><span class="stat-value">FY {selected_fy} · Period: {selected_month}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="stat-mini"><span class="stat-label">Active Audit Boundary Target</span><span class="stat-value">FY {config.CURRENT_FISCAL_YEAR} · Period: {current_period}</span></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="stat-mini"><span class="stat-label">Endpoint String URI Mapping</span><span class="stat-value" style="font-family: monospace; font-size:11px; color:var(--primary);">{fetch_meta.get("source_url", "N/A")}</span></div>', unsafe_allow_html=True)
     if fetch_meta.get("warning"):
         st.markdown(f'<div class="stat-mini" style="border-left: 3px solid var(--warning); background-color: #FFFBEB;"><span class="stat-label" style="color: var(--warning);">Diagnostic Exception Notice</span><span class="stat-value" style="color: var(--warning); font-size:11.5px;">{fetch_meta["warning"]}</span></div>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-def render_audit_log_portal(fetch_meta: dict, current_period: str):
-    render_audit_log(fetch_meta, config.CURRENT_FISCAL_YEAR, current_period)
+def fmt_number(value) -> str:
+    """Synchronized mathematical inline cell metric layout string formatter."""
+    if value is None or pd.isna(value): return "N/A"
+    try:
+        v = float(value)
+    except (ValueError, TypeError):
+        return "N/A"
+    if abs(v) >= 1_000_000: return f"{v/1_000_000:,.2f}M"
+    if abs(v) >= 1_000: return f"{v:,.1f}"
+    return f"{v:,.2f}" if v != int(v) else f"{int(v):,}"
