@@ -1,5 +1,6 @@
 """
-UI Design System Tokens & Plotly Layout Customization Helpers.
+UI Presentation Token & Format Sanitization Helpers.
+Guarantees presence of layout customization wrappers and style hooks.
 """
 import pandas as pd
 
