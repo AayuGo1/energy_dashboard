@@ -1,12 +1,13 @@
 # app.py
 """
 Jubilant FoodWorks Limited — Modern Enterprise Analytics Portal.
-Synchronized Core Layout and System Routing Entrypoint.
+100% Metadata-Driven Architecture mapping pages and visual blocks directly from the source workbook.
 """
 import re
 import time
 from io import BytesIO
 from datetime import datetime
+
 import requests
 import numpy as np
 import pandas as pd
@@ -24,10 +25,8 @@ from kpi_engine import (
     _stable_kpi_hash,
     compute_portal_derivatives,
     render_risk_panel_dynamic,
-    render_audit_log_portal,
     get_kpi_status_dynamic,
-    render_risk_panel,
-    render_audit_log,
+    render_audit_log_portal,
 )
 from helpers.formatting import (
     PAL,
@@ -35,10 +34,7 @@ from helpers.formatting import (
     safe_icon_for_dynamic,
     apply_enterprise_layout
 )
-from transformers.unpivot import (
-    melt_wide_sheet_to_long_cached,
-    infer_and_melt_workbook_metadata,
-)
+from transformers.unpivot import infer_and_melt_workbook_metadata
 from charts.env_visuals import (
     render_waste_efficiency_hybrid_chart,
     render_waste_stream_stacked_chart,
@@ -49,17 +45,9 @@ from charts.env_visuals import (
 
 logger = get_logger()
 CACHE_TTL_SECONDS = config.RAW_FILE_CACHE_TTL_SECONDS
-
-st.set_page_config(
-    page_title=f"{config.COMPANY_NAME} | Enterprise Analytics Portal",
-    page_icon="📊", layout="wide", initial_sidebar_state="expanded"
-)
-
+PLOTLY_BG = "rgba(0,0,0,0)"
 
 def compute_hse_score_dynamic(kpi_dict: dict, periods_list: list, target_period: str) -> float:
-    """
-    Computes a fluid, dynamic safety index by scanning metrics keys for common indicators.
-    """
     try:
         total_incidents = 0.0
         incident_keywords = ["fatalit", "injury", "accident", "near miss"]
@@ -81,17 +69,14 @@ def compute_hse_score_dynamic(kpi_dict: dict, periods_list: list, target_period:
         logger.error(f"Dynamic safety evaluation engine intercept anomaly: {e}")
         return 100.0
 
-
 def get_remote_cache_key(url: str) -> str:
     try:
         resp = requests.head(url, timeout=10, allow_redirects=True)
         tag = resp.headers.get("ETag") or resp.headers.get("Last-Modified")
-        if tag:
-            return tag
+        if tag: return tag
     except requests.RequestException:
         pass
     return str(int(time.time() // CACHE_TTL_SECONDS))
-
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def fetch_workbook_bytes(url: str, cache_key: str) -> bytes:
@@ -99,23 +84,20 @@ def fetch_workbook_bytes(url: str, cache_key: str) -> bytes:
     resp.raise_for_status()
     return resp.content
 
-
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def load_all_sheets_raw(file_bytes: bytes) -> dict:
     sheets = pd.read_excel(BytesIO(file_bytes), sheet_name=None, engine="openpyxl")
     cleaned = {}
     for name, df in sheets.items():
-        if df is None or df.empty:
-            continue
+        if df is None or df.empty: continue
         cleaned[name] = df.dropna(axis=0, how="all")
     return cleaned
-
 
 def inject_portal_design_language():
     p = PAL
     st.markdown(f"""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght=400;500;600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
     :root {{
         --bg:{p['bg']}; --surface:{p['surface']}; --surface-alt:{p['surface-alt']};
         --border:{p['border']}; --text-hi:{p['text-hi']}; --text-mid:{p['text-mid']};
@@ -153,9 +135,9 @@ def inject_portal_design_language():
         100%{{box-shadow:0 0 0 0 rgba(16,185,129,0);}} }}
     .status-sub {{ font-size:11px; color:var(--text-mid) !important; margin-top:5px; font-variant-numeric: tabular-nums; }}
 
-    div.stButton > button {{ background:var(--surface); color:var(--text-mid) !important; border:1px solid var(--border);
+    div.stButton > button {{ background:var(--primary); color:var(--surface) !important; border:none;
         border-radius:8px; padding:8px 14px; font-weight:600; width:100%; transition: all 0.15s ease; box-shadow:var(--shadow); }}
-    div.stButton > button:hover {{ border-color: var(--primary); color: var(--primary) !important; background: #FAF9FA; }}
+    div.stButton > button:hover {{ background:var(--primary-2); color:var(--surface) !important; }}
 
     .app-header {{ display:flex; align-items:center; justify-content:between; gap:20px;
         padding:22px 28px; margin-bottom:26px; background:var(--surface); border-radius:16px;
@@ -207,7 +189,6 @@ def inject_portal_design_language():
     </style>
     """, unsafe_allow_html=True)
 
-
 def render_sidebar():
     with st.sidebar:
         st.markdown(f"""
@@ -219,35 +200,13 @@ def render_sidebar():
                 </div>
             </div>
         """, unsafe_allow_html=True)
-        st.markdown('<div class="sb-section-title">📡 Data Pipeline Link</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sb-section-title">🗂 Portal Navigation</div>', unsafe_allow_html=True)
         status_placeholder = st.empty()
-        if st.button("🔄 Execute Safe Cache Clear"):
-            fetch_workbook_bytes.clear()
-            load_all_sheets_raw.clear()
-            st.rerun()
-        st.markdown('<div class="sb-section-title">🗂 Portal Navigation Sections</div>', unsafe_allow_html=True)
     return status_placeholder
-
 
 def render_status(placeholder, connected: bool, last_refresh: str, is_fallback: bool = False, note: str = ""):
     with placeholder.container():
-        if connected and not is_fallback:
-            st.markdown(f"""
-                <div class="status-card">
-                    <div class="status-row"><span class="status-dot"></span>Active Ingestion Feed</div>
-                    <div class="status-sub">Refreshed: {last_refresh}</div>
-                </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-                <div class="status-card" style="border-left:3px solid var(--warning);">
-                    <div class="status-row" style="color:var(--warning) !important;">
-                        <span class="status-dot" style="background:var(--warning); animation:none;"></span>Safe Backup Running
-                    </div>
-                    <div class="status-sub">{note or 'Displaying snapshot dataset records.'}</div>
-                </div>
-            """, unsafe_allow_html=True)
-
+        pass # Sidebar implementation wrapper kept for diagnostics compatibility mapping
 
 def render_kpi_card_layout(metric_name, value, prev_value, unit):
     display_val = fmt_number(value)
@@ -274,171 +233,35 @@ def render_kpi_card_layout(metric_name, value, prev_value, unit):
                 <div class="kpi-icon-badge">{safe_icon_for_dynamic(metric_name)}</div>
                 <div class="kpi-trend-pill {pill_class}">{delta_str}</div>
             </div>
-            <div class="kpi-value">{display_val} <span style="font-size:13px; font-weight:500; color:var(--text-mid);">{unit}</span></div>
+            <div class="kpi-value">{display_val} <span style="font-size:12px; font-weight:500; color:var(--text-mid);">{unit}</span></div>
             <div class="kpi-label">{metric_name}</div>
         </div>
         <div class="kpi-compare">vs previous period: <b>{fmt_number(prev_value)}</b></div>
     </div>
     """, unsafe_allow_html=True)
 
-
-def main():
-    inject_portal_design_language()
-    status_placeholder = render_sidebar()
+def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics: list, selected_period: str, previous_period: str, units_registry: dict):
+    """
+    100% Metadata-driven layout renderer engine. Eliminates hardcoded page configurations 
+    by slicing long frames dynamically by inferred functional target names.
+    """
+    st.markdown(f'<div class="section-label">{page_key} Executive Analytical Framework</div>', unsafe_allow_html=True)
     
-    raw_bytes, sheets, load_error = None, None, None
-    fetch_meta = {"source": "live", "fetched_at": "—", "source_url": config.GITHUB_RAW_URL_OVERRIDE, "warning": None}
-    schema_warnings = []
-
-    with st.spinner("⏳ Accessing core analytical data stream..."):
-        try:
-            target_endpoint = resolve_latest_file_url(config.GITHUB_RAW_URL_OVERRIDE)
-            cache_sig = get_remote_cache_key(target_endpoint)
-            raw_bytes, fetch_meta = fetch_workbook_hardened(target_endpoint, cache_sig, fetch_workbook_bytes)
-            schema_warnings = validate_schema(raw_bytes)
-            sheets = load_all_sheets_raw(raw_bytes)
-        except Exception as e:
-            load_error = f"Pipeline execution termination sequence: {e}"
-            logger.critical(load_error)
-
-    if load_error or not sheets:
-        st.error(f"⚠️ High-Priority Pipeline Failure Intercepted: {load_error}")
-        st.stop()
-
-    render_status(
-        status_placeholder, connected=(load_error is None),
-        last_refresh=fetch_meta.get("fetched_at", "—"),
-        is_fallback=(fetch_meta.get("source") == "fallback"),
-        note=str(fetch_meta.get("warning") or "")
-    )
-
-    meta_bundle = infer_and_melt_workbook_metadata(sheets)
-    df_long = meta_bundle["long_df"]
-    timeline_periods = meta_bundle["periods"]
-    units_registry = meta_bundle["units"]
-
-    if df_long.empty:
-        st.error("⚠️ Zero entries could be parsed from data source maps.")
-        st.stop()
-
-    with st.sidebar:
-        nav_options = [
-            "🏠 Executive Overview", "🦺 Health & Safety", 
-            "⚡ Energy Metrics", "💧 Water Management", 
-            "♻️ Waste & Sustainability", "🏭 Production Yields", 
-            "📈 Macro Trends", "📋 Diagnostics"
-        ]
-        selected_page = st.radio("Portal Navigation Menu Target", options=nav_options, label_visibility="collapsed")
-        st.markdown('<div class="sb-section-title">⏱ Timeline Focus</div>', unsafe_allow_html=True)
-        selected_period = st.selectbox("Active Period Window", options=timeline_periods, index=len(timeline_periods)-1)
-        
-        idx = timeline_periods.index(selected_period)
-        previous_period = timeline_periods[idx - 1] if idx > 0 else None
-
-    df_period_mask = df_long[df_long["Period"] == selected_period]
-    unique_metrics = df_long["Metric"].unique().tolist()
+    df_page_long = df_long[df_long["Page"] == page_key]
+    df_period = df_page_long[df_long["Period"] == selected_period]
     
-    kpi_dict_payload = {}
-    for m in unique_metrics:
-        m_subset = df_long[df_long["Metric"] == m]
-        kpi_dict_payload[m.lower().strip()] = m_subset.set_index("Period")["Value"].to_dict()
-
-    stable_payload_hash = _stable_kpi_hash(kpi_dict_payload)
-    derivatives = compute_portal_derivatives(
-        stable_payload_hash, kpi_dict_payload, tuple(timeline_periods), selected_period, compute_hse_score_dynamic
-    )
-
-    current_date_str = datetime.now().strftime("%A, %d %B %Y")
-    st.markdown(f"""
-        <div class="app-header">
-            <div class="app-header-left">
-                <div class="app-header-icon">📊</div>
-                <div>
-                    <h1>{config.COMPANY_NAME}</h1>
-                    <p>{config.DASHBOARD_TITLE} — Navigation Sector Focus: <b>{selected_page}</b></p>
-                </div>
-            </div>
-            <div class="header-badge-row">
-                <div class="header-badge">📅 {current_date_str}</div>
-                <div class="header-badge">FY Target: {config.CURRENT_FISCAL_YEAR}</div>
-                <div class="header-badge live">🎚 Focus Interval: {selected_period}</div>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-    if schema_warnings:
-        st.warning(f"⚠️ Ingestion Warning: {len(schema_warnings)} template schema anomalies flagged inside data feed layers.")
-
-    # --- ROUTING CONTROL LAYOUT PASSES ---
-    if "overview" in selected_page.lower():
-        st.markdown('<div class="section-label">Enterprise Corporate Executive Overview Summary</div>', unsafe_allow_html=True)
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary);"><div class="kpi-top-row"><div class="kpi-icon-badge">🎯</div><div class="kpi-trend-pill flat">HSE Index</div></div><div class="kpi-value">{derivatives['hse_score']} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">/ 100</span></div><div class="kpi-label">Dynamic Operational Performance Rating</div><div class="kpi-compare">Active Evaluation Period: <b>{selected_period}</b></div></div>""", unsafe_allow_html=True)
-        with c2:
-            prod_val_series = df_period_mask[df_period_mask["Page"] == "Production"]["Value"].dropna()
-            total_prod_sum = prod_val_series.sum() if not prod_val_series.empty else 0.0
-            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary-2);"><div class="kpi-top-row"><div class="kpi-icon-badge">🏭</div><div class="kpi-trend-pill flat">Output Gross</div></div><div class="kpi-value">{fmt_number(total_prod_sum)} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">Metric Units</span></div><div class="kpi-label">Aggregated Industrial Production Volume</div><div class="kpi-compare">Consolidated timeline summation pass</div></div>""", unsafe_allow_html=True)
-        with c3:
-            total_alerts_count = len(derivatives.get("anomalies", []))
-            pill_col = "var(--success)" if total_alerts_count == 0 else "var(--warning)"
-            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid {pill_col};"><div class="kpi-top-row"><div class="kpi-icon-badge">🔔</div><div class="kpi-trend-pill flat">Alarms Trigger</div></div><div class="kpi-value" style="color:{pill_col};">{total_alerts_count} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">Active Flags</span></div><div class="kpi-label">Active Exception Variance Warnings</div><div class="kpi-compare">Scaled relative to threshold profiles</div></div>""", unsafe_allow_html=True)
-
-        render_risk_panel_dynamic(kpi_dict_payload, selected_period, timeline_periods, derivatives)
-        
-    elif "safety" in selected_page.lower():
-        st.markdown('<div class="section-label">Health & Safety Operations Domain Scope</div>', unsafe_allow_html=True)
-        df_hs = df_long[df_long["Page"] == "Health & Safety"]
-        hs_metrics = df_hs["Metric"].unique().tolist()
-        cols = st.columns(min(len(hs_metrics), 4))
-        for i, m in enumerate(hs_metrics[:8]):
-            m_df = df_hs[df_hs["Metric"] == m]
-            c_val = m_df[m_df["Period"] == selected_period]["Value"].iloc[0] if not m_df[m_df["Period"] == selected_period].empty else None
-            p_val = m_df[m_df["Period"] == previous_period]["Value"].iloc[0] if previous_period and not m_df[m_df["Period"] == previous_period].empty else None
-            with cols[i % min(len(hs_metrics), 4)]:
-                render_kpi_card_layout(m, c_val, p_val, units_registry.get(m, ""))
-
-    elif "energy" in selected_page.lower():
-        st.markdown('<div class="section-label">Energy Subdivisions & Resource Usage Analysis</div>', unsafe_allow_html=True)
-        df_en = df_long[df_long["Metric"].str.lower().str.contains("energy|diesel|lpg|electricity", regex=True)]
-        en_metrics = df_en["Metric"].unique().tolist()
-        cols = st.columns(min(len(en_metrics), 4))
-        for i, m in enumerate(en_metrics[:4]):
-            m_df = df_en[df_en["Metric"] == m]
-            c_val = m_df[m_df["Period"] == selected_period]["Value"].iloc[0] if not m_df[m_df["Period"] == selected_period].empty else None
-            p_val = m_df[m_df["Period"] == previous_period]["Value"].iloc[0] if previous_period and not m_df[m_df["Period"] == previous_period].empty else None
-            with cols[i % 4]:
-                render_kpi_card_layout(m, c_val, p_val, units_registry.get(m, ""))
-        st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-        render_dynamic_hybrid_overlay(df_long, "⚡ Yield Scaling vs Direct Energy Intensity Cross Check Profile", "Production Volume", "energy consumption")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    elif "water" in selected_page.lower():
-        st.markdown('<div class="section-label">Water Management Networks Intake & Withdrawal Systems</div>', unsafe_allow_html=True)
-        df_wt = df_long[df_long["Metric"].str.lower().str.contains("water", regex=False)]
-        wt_metrics = df_wt["Metric"].unique().tolist()
-        cols = st.columns(min(len(wt_metrics), 4))
-        for i, m in enumerate(wt_metrics[:4]):
-            m_df = df_wt[df_wt["Metric"] == m]
-            c_val = m_df[m_df["Period"] == selected_period]["Value"].iloc[0] if not m_df[m_df["Period"] == selected_period].empty else None
-            p_val = m_df[m_df["Period"] == previous_period]["Value"].iloc[0] if previous_period and not m_df[m_df["Period"] == previous_period].empty else None
-            with cols[i % 4]:
-                render_kpi_card_layout(m, c_val, p_val, units_registry.get(m, ""))
-        st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-        render_water_discharge_spline(df_long)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    elif "waste" in selected_page.lower():
-        st.markdown('<div class="section-label">Waste Efficiency, Streams Segregation & Sustainability Systems</div>', unsafe_allow_html=True)
-        df_wst = df_long[df_long["Metric"].str.lower().str.contains("waste", regex=False)]
-        wst_metrics = df_wst["Metric"].unique().tolist()
-        cols = st.columns(min(len(wst_metrics), 4))
-        for i, m in enumerate(wst_metrics[:4]):
-            m_df = df_wst[df_wst["Metric"] == m]
-            c_val = m_df[m_df["Period"] == selected_period]["Value"].iloc[0] if not m_df[m_df["Period"] == selected_period].empty else None
-            p_val = m_df[m_df["Period"] == previous_period]["Value"].iloc[0] if previous_period and not m_df[m_df["Period"] == previous_period].empty else None
-            with cols[i % 4]:
-                render_kpi_card_layout(m, c_val, p_val, units_registry.get(m, ""))
+    # 1. Executive Summary Cards Pass
+    cols = st.columns(min(len(page_metrics), 4))
+    for i, metric in enumerate(page_metrics[:4]):
+        m_subset = df_page_long[df_page_long["Metric"] == metric]
+        c_val = m_subset[m_subset["Period"] == selected_period]["Value"].iloc[0] if not m_subset[m_subset["Period"] == selected_period].empty else None
+        p_val = m_subset[m_subset["Period"] == previous_period]["Value"].iloc[0] if previous_period and not m_subset[m_subset["Period"] == previous_period].empty else None
+        with cols[i % 4]:
+            render_kpi_card_layout(metric, c_val, p_val, units_registry.get(metric, ""))
+            
+    # 2. Dynamic Charts Block (Monthly and Historical Trends Overlay)
+    st.markdown('<div class="section-label">Trend Matrix & Target Analysis Projections</div>', unsafe_allow_html=True)
+    if page_key == "Waste":
         c_left, c_right = st.columns(2)
         with c_left:
             st.markdown('<div class="exec-card">', unsafe_allow_html=True)
@@ -448,34 +271,198 @@ def main():
             st.markdown('<div class="exec-card">', unsafe_allow_html=True)
             render_waste_stream_stacked_chart(df_long)
             st.markdown('</div>', unsafe_allow_html=True)
-
-    elif "production" in selected_page.lower():
-        st.markdown('<div class="section-label">Industrial Production Yield Volumes & Gross Output Metrics</div>', unsafe_allow_html=True)
-        df_pr = df_long[df_long["Page"] == "Production"]
-        pr_metrics = df_pr["Metric"].unique().tolist()
-        for m in pr_metrics:
-            m_df = df_pr[df_pr["Metric"] == m]
-            c_val = m_df[m_df["Period"] == selected_period]["Value"].iloc[0] if not m_df[m_df["Period"] == selected_period].empty else None
-            p_val = m_df[m_df["Period"] == previous_period]["Value"].iloc[0] if previous_period and not m_df[m_df["Period"] == previous_period].empty else None
-            render_kpi_card_layout(m, c_val, p_val, units_registry.get(m, ""))
-
-    elif "trends" in selected_page.lower():
-        st.markdown('<div class="section-label">Consolidated Historical Micro-Trends Matrix Dashboard</div>', unsafe_allow_html=True)
-        m_sel = st.selectbox("Isolate Active Analytical Variable Series to Project", options=unique_metrics)
+    elif page_key == "Water":
         st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-        render_single_trajectory_area(df_long, m_sel, f"📈 Historical Longitudinal Evaluation Timeline Profile: {m_sel}", PAL["primary"])
+        render_water_discharge_spline(df_long)
+        st.markdown('</div>', unsafe_allow_html=True)
+    elif page_key == "Energy":
+        st.markdown('<div class="exec-card">', unsafe_allow_html=True)
+        render_dynamic_hybrid_overlay(df_long, "⚡ Production Scale vs Direct Energy Consumption Footprint Profile", "Production Volume", "energy consumption")
+        st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        if page_metrics:
+            st.markdown('<div class="exec-card">', unsafe_allow_html=True)
+            render_single_trajectory_area(df_page_long, page_metrics[0], f"📈 Historical Longitudinal Evaluation Timeline Profile: {page_metrics[0]}", PAL["primary"])
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    # 3. Supplemental KPI Metrics Sub-Grid Array
+    if len(page_metrics) > 4:
+        st.markdown('<div class="section-label">Extended Operational Performance Indices Grid</div>', unsafe_allow_html=True)
+        grid_metrics = page_metrics[4:]
+        for i in range(0, len(grid_metrics), 4):
+            chunk = grid_metrics[i:i+4]
+            row_cols = st.columns(len(chunk))
+            for col, metric in zip(row_cols, chunk):
+                m_subset = df_page_long[df_page_long["Metric"] == metric]
+                c_val = m_subset[m_subset["Period"] == selected_period]["Value"].iloc[0] if not m_subset[m_subset["Period"] == selected_period].empty else None
+                p_val = m_subset[m_subset["Period"] == previous_period]["Value"].iloc[0] if previous_period and not m_subset[m_subset["Period"] == previous_period].empty else None
+                with col:
+                    render_kpi_card_layout(metric, c_val, p_val, units_registry.get(metric, ""))
+
+    # 4. Raw Monthly Filtered Data Explorer Table & CSV Text Segment Exportation
+    st.markdown('<div class="section-label">Granular Periodic Data Table Record Sets</div>', unsafe_allow_html=True)
+    df_table_out = df_period[["Category", "Subcategory", "Metric", "Value", "Unit"]].reset_index(drop=True)
+    with st.expander("📄 Query Segment Database Records Grid", expanded=False):
+        st.dataframe(df_table_out, use_container_width=True, height=280)
+        csv_buffer = df_table_out.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Export Current Segment Frame to CSV Format", data=csv_buffer, file_name=f"{page_key}_segment_normalized_export.csv", mime="text/csv")
+
+
+def main():
+    inject_portal_design_language()
+    _ = render_sidebar()
+    
+    raw_bytes, sheets, load_error = None, None, None
+    fetch_meta = {"source": "live", "fetched_at": "—", "source_url": config.GITHUB_RAW_URL_OVERRIDE, "warning": None}
+    schema_warnings = []
+
+    with st.spinner("⏳ Connecting to secure pipeline datastream..."):
+        try:
+            target_endpoint = resolve_latest_file_url(config.GITHUB_RAW_URL_OVERRIDE)
+            cache_sig = get_remote_cache_key(target_endpoint)
+            raw_bytes, fetch_meta = fetch_workbook_hardened(target_endpoint, cache_sig, fetch_workbook_bytes)
+            schema_warnings = validate_schema(raw_bytes)
+            sheets = load_all_sheets_raw(raw_bytes)
+        except Exception as e:
+            load_error = f"Pipeline linkage block failure sequence: {e}"
+            logger.critical(load_error)
+
+    if load_error or not sheets:
+        st.error(f"⚠️ Critical System Ingestion Terminated: {load_error}")
+        st.stop()
+
+    meta_bundle = infer_and_melt_workbook_metadata(sheets)
+    df_long = meta_bundle["long_df"]
+    catalog = meta_bundle["catalog"]
+    timeline_periods = meta_bundle["periods"]
+    units_registry = meta_bundle["units"]
+
+    # =============================================================================
+    # METADATA-DRIVEN SIDEBAR NAVIGATION INTERFACE
+    # =============================================================================
+    with st.sidebar:
+        nav_menu_options = ["🏠 Executive Overview"]
+        for catalog_page in sorted(list(catalog.keys())):
+            if catalog_page != "Executive Overview":
+                # Determine appropriate visual prefix icon dynamically
+                emoji_icon = "🌍"
+                if "safety" in catalog_page.lower(): emoji_icon = "🦺"
+                elif "energy" in catalog_page.lower(): emoji_icon = "⚡"
+                elif "water" in catalog_page.lower(): emoji_icon = "💧"
+                elif "waste" in catalog_page.lower(): emoji_icon = "♻️"
+                elif "production" in catalog_page.lower(): emoji_icon = "🏭"
+                nav_menu_options.append(f"{emoji_icon} {catalog_page}")
+                
+        nav_menu_options.extend(["📈 Trends Analytics", "⚙️ Admin / Diagnostics"])
+        selected_page_raw = st.radio("Access Console Target Area", options=nav_menu_options, label_visibility="collapsed")
+        
+        # Strip decorators to extract pure structural indexing string keys
+        selected_page = re.sub(r"[^\w\s&]", "", selected_page_raw).strip()
+        if "Executive Overview" in selected_page: selected_page = "Executive Overview"
+        elif "Trends Analytics" in selected_page: selected_page = "Trends"
+        elif "Admin" in selected_page: selected_page = "Diagnostics"
+
+        st.markdown('<div class="sb-section-title">⏱ Reporting Time Focus</div>', unsafe_allow_html=True)
+        selected_period = st.selectbox("Active Period Frame", options=timeline_periods, index=len(timeline_periods)-1)
+        idx = timeline_periods.index(selected_period)
+        previous_period = timeline_periods[idx - 1] if idx > 0 else None
+
+    # Sync primary dictionary mappings to fuel derived validation telemetry matrixes
+    kpi_dict_payload = {}
+    for m in df_long["Metric"].unique().tolist():
+        m_subset = df_long[df_long["Metric"] == m]
+        kpi_dict_payload[m.lower().strip()] = m_subset.set_index("Period")["Value"].to_dict()
+
+    stable_payload_hash = _stable_kpi_hash(kpi_dict_payload)
+    derivatives = compute_portal_derivatives(
+        stable_payload_hash, kpi_dict_payload, tuple(timeline_periods), selected_period, compute_hse_score_dynamic
+    )
+
+    # --- TOP PORTAL HEADER STATUS INDICATOR MARKERS ---
+    current_date_str = datetime.now().strftime("%A, %d %B %Y")
+    status_marker = "Live · Connected" if fetch_meta.get("source") == "live" else "Snapshot Cache Active"
+    status_color = "var(--success)" if fetch_meta.get("source") == "live" else "var(--warning)"
+    
+    st.markdown(f"""
+        <div class="app-header">
+            <div class="app-header-left">
+                <div class="app-header-icon">📊</div>
+                <div>
+                    <h1>{config.COMPANY_NAME}</h1>
+                    <p>{config.DASHBOARD_TITLE} — Active Context Module: <b>{selected_page}</b></p>
+                </div>
+            </div>
+            <div class="header-badge-row">
+                <div class="header-badge" style="color: {status_color}; background: rgba(0,0,0,0.02);"><span class="status-dot" style="background: {status_color};"></span> Status: {status_marker}</div>
+                <div class="header-badge">📅 {current_date_str}</div>
+                <div class="header-badge">Focus Window: <b>{selected_period}</b></div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    if schema_warnings:
+        st.sidebar.warning(f"Validation Notice: {len(schema_warnings)} template variations captured.")
+
+    # =============================================================================
+    # METADATA PORTAL PAGE CONSOLE ROUTING MATRIX
+    # =============================================================================
+    
+    # 1. EXECUTIVE OVERVIEW PAGE (Summaries and Risk Matrix blocks only; zero raw grids)
+    if selected_page == "Executive Overview":
+        st.markdown('<div class="section-label">Enterprise Executive Summary & Composite Scores Balance</div>', unsafe_allow_html=True)
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary);"><div class="kpi-top-row"><div class="kpi-icon-badge">🎯</div><div class="kpi-trend-pill flat">HSE Index</div></div><div class="kpi-value">{derivatives['hse_score']} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">/ 100</span></div><div class="kpi-label">Dynamic Operational Safety Index Score</div><div class="kpi-compare">Timeline Period Focus: <b>{selected_period}</b></div></div>""", unsafe_allow_html=True)
+        with c2:
+            prod_val_series = df_long[(df_long["Page"] == "Production") & (df_long["Period"] == selected_period)]["Value"].dropna()
+            total_prod_sum = prod_val_series.sum() if not prod_val_series.empty else 0.0
+            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary-2);"><div class="kpi-top-row"><div class="kpi-icon-badge">🏭</div><div class="kpi-trend-pill flat">Gross Vol</div></div><div class="kpi-value">{fmt_number(total_prod_sum)} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">Metrics</span></div><div class="kpi-label">Aggregated Industrial Production Output</div><div class="kpi-compare">Consolidated current period summation pass</div></div>""", unsafe_allow_html=True)
+        with c3:
+            total_alerts_count = len(derivatives.get("anomalies", []))
+            pill_col = "var(--success)" if total_alerts_count == 0 else "var(--warning)"
+            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid {pill_col};"><div class="kpi-top-row"><div class="kpi-icon-badge">🔔</div><div class="kpi-trend-pill flat">Alert System</div></div><div class="kpi-value" style="color:{pill_col};">{total_alerts_count} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">Flags</span></div><div class="kpi-label">Active Exception Anomaly Violations</div><div class="kpi-compare">Triggers scaled MoM change bounds</div></div>""", unsafe_allow_html=True)
+
+        render_risk_panel_dynamic(kpi_dict_payload, selected_period, timeline_periods, derivatives)
+        
+        st.markdown('<div class="section-label">Cross-Divisional Metadata Discovered Topical Synopses</div>', unsafe_allow_html=True)
+        df_period_mask = df_long[df_long["Period"] == selected_period]
+        cc1, cc2, cc3 = st.columns(3)
+        with cc1:
+            st.markdown('<div class="exec-card"><h6>⚡ Discovered Energy Footprint Indices</h6>', unsafe_allow_html=True)
+            for _, r in df_period_mask[df_period_mask["Page"] == "Energy"].head(4).iterrows():
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{r["Metric"][:35]}</span><span class="stat-value">{fmt_number(r["Value"])} {r["Unit"]}</span></div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        with cc2:
+            st.markdown('<div class="exec-card"><h6>💧 Discovered Hydraulic Flow Indices</h6>', unsafe_allow_html=True)
+            for _, r in df_period_mask[df_period_mask["Page"] == "Water"].head(4).iterrows():
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{r["Metric"][:35]}</span><span class="stat-value">{fmt_number(r["Value"])} {r["Unit"]}</span></div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        with cc3:
+            st.markdown('<div class="exec-card"><h6>♻️ Discovered Material Stewardship Indices</h6>', unsafe_allow_html=True)
+            for _, r in df_period_mask[df_period_mask["Page"] == "Waste"].head(4).iterrows():
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{r["Metric"][:35]}</span><span class="stat-value">{fmt_number(r["Value"])} {r["Unit"]}</span></div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    # 2. GLOBAL LONVERS TREND METRICS SELECTION OVERVIEW ENGINE
+    elif selected_page == "Trends":
+        st.markdown('<div class="section-label">Longitudinal Trends Visual Optimization Engine</div>', unsafe_allow_html=True)
+        metric_selection = st.selectbox("Isolate Discovered Variable Key Axis to Graph", options=sorted(unique_metrics))
+        st.markdown('<div class="exec-card">', unsafe_allow_html=True)
+        render_single_trajectory_area(df_long, metric_selection, f"📈 Historical Longitudinal Evaluation Timeline Profile: {metric_selection}", PAL["primary"])
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Expanded raw query and table management view passes
-    st.markdown('<div class="section-label">Context Inferred Tabular Spreadsheet Source Grid View</div>', unsafe_allow_html=True)
-    df_grid = df_period_mask[["Category", "Subcategory", "Metric", "Value", "Unit"]].reset_index(drop=True)
-    with st.expander("📄 Access Active Normalized Workspace Rows Database Matrix", expanded=False):
-        sq = st.text_input("⚡ String Parameter Search Matrix Engine Filter Filter", placeholder="Type metrics fragments to slice values dynamically...")
-        if sq:
-            df_grid = df_grid[df_grid["Metric"].str.lower().str.contains(sq.lower()) | df_grid["Category"].str.lower().str.contains(sq.lower())]
-        st.dataframe(df_grid, use_container_width=True, height=350)
+    # 3. ADMINISTRATIVE ISOLATION PAGE (Diagnostics logs, Schema warnings array and API parameters context)
+    elif selected_page == "Diagnostics":
+        if schema_warnings:
+            fetch_meta["warning"] = f"Workbook layout schema validation exceptions: {'; '.join(schema_warnings)}"
+        render_audit_log_portal(fetch_meta, selected_period)
 
-    render_audit_log_portal(fetch_meta, selected_period)
+    # 4. METADATA DETECTED VARIABLE TARGET VIEW ROUTING PASSES
+    else:
+        if selected_page in catalog:
+            render_metadata_page_view(selected_page, df_long, catalog[selected_page], selected_period, previous_period, units_registry)
+        else:
+            st.info("No active operational elements mapped under this metadata navigation category node.")
 
 
 if __name__ == "__main__":
