@@ -1,3 +1,4 @@
+# app.py
 """
 Jubilant FoodWorks Limited — Modern Enterprise Analytics Portal.
 100% Data-driven architecture deriving parameters directly from Excel structural taxonomy.
@@ -37,7 +38,6 @@ from transformers.unpivot import infer_and_melt_workbook_metadata
 logger = get_logger()
 CACHE_TTL_SECONDS = config.RAW_FILE_CACHE_TTL_SECONDS
 
-# Consolidated wide canvas layout overrides initialization
 st.set_page_config(
     page_title=f"{config.COMPANY_NAME} | Enterprise Analytics Portal",
     page_icon="📊", layout="wide", initial_sidebar_state="expanded"
@@ -78,6 +78,18 @@ def fetch_workbook_bytes(url: str, cache_key: str) -> bytes:
     resp = requests.get(url, timeout=25)
     resp.raise_for_status()
     return resp.content
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def load_all_sheets_raw(file_bytes: bytes) -> dict:
+    """Restored to explicitly satisfy structural architecture requirements and prevent NameErrors."""
+    import openpyxl
+    wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
+    cleaned = {}
+    for name in wb.sheetnames:
+        df = pd.read_excel(BytesIO(file_bytes), sheet_name=name, engine="openpyxl")
+        if df is None or df.empty: continue
+        cleaned[name] = df.dropna(axis=0, how="all")
+    return cleaned
 
 def inject_portal_design_language():
     p = PAL
@@ -251,7 +263,6 @@ def main():
         st.error(f"⚠️ Critical Ingestion Failure: {load_error}")
         st.stop()
 
-    # STEP 4 & 5: Normalize everything using metadata-driven discovery engine
     meta_bundle = infer_and_melt_workbook_metadata(raw_bytes)
     df_long = meta_bundle["long_df"]
     catalog = meta_bundle["catalog"]
@@ -262,11 +273,9 @@ def main():
         st.error("⚠️ Zero entries parsed from current data layout.")
         st.stop()
 
-    # STEP 6: Temporary Debug Dataframe Output Layer Pass
     st.markdown('<div class="section-label">⚙️ Pipeline Debug Layer (Step 6 Verification Table Matrix)</div>', unsafe_allow_html=True)
     st.dataframe(df_long, use_container_width=True, height=220)
 
-    # STEP 7: Pure Metadata Navigation Routing Matrix Controls
     with st.sidebar:
         nav_menu_options = [
             "Executive Overview", 
@@ -281,7 +290,6 @@ def main():
         idx = timeline_periods.index(selected_period)
         previous_period = timeline_periods[idx - 1] if idx > 0 else None
 
-    # STEP 7 Core Filtering Logic Rule Processing Pass
     if selected_page != "Executive Overview":
         df_page_filtered = df_long[df_long["Category"] == selected_page]
     else:
@@ -301,6 +309,9 @@ def main():
     )
 
     current_date_str = datetime.now().strftime("%A, %d %B %Y")
+    status_marker = "Synchronized" if fetch_meta.get("source") == "live" else "Snapshot Active"
+    status_color = "var(--success)" if fetch_meta.get("source") == "live" else "var(--warning)"
+    
     st.markdown(f"""
         <div class="app-header">
             <div class="app-header-left">
@@ -318,7 +329,6 @@ def main():
         </div>
     """, unsafe_allow_html=True)
 
-    # --- ROUTING VIEW RENDERING CHASSIS PASSES ---
     if selected_page == "Executive Overview":
         st.markdown('<div class="section-label">Enterprise High-Level Executive Status & Alert Summaries</div>', unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
@@ -332,7 +342,7 @@ def main():
         with c3:
             total_alerts_count = len(derivatives.get("anomalies", []))
             pill_col = "var(--success)" if total_alerts_count == 0 else "var(--warning)"
-            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid {pill_col};"><div class="kpi-top-row"><div class="kpi-icon-badge">🔔</div><div class="kpi-trend-pill flat">Alert Matrix</div></div><div class="kpi-value" style="color:{pill_col};">{total_alerts_count} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">Active Flags</span></div><div class="kpi-label">Active Exception Anomaly Variance Notifications</div><div class="kpi-compare">Scaled relative to boundary deviations</div></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid {pill_col};"><div class="kpi-top-row"><div class="kpi-icon-badge">🔔</div><div class="kpi-trend-pill flat">Alert Matrix</div></div><div class="kpi-value" style="color:{pill_col};">{total_alerts_count} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">Active Flags</span></div><div class="kpi-label">Exception Anomaly Variance Notifications</div><div class="kpi-compare">Scaled relative to boundary deviations</div></div>""", unsafe_allow_html=True)
 
         render_risk_panel_dynamic(kpi_dict_payload, selected_period, timeline_periods, derivatives, units_registry)
         
@@ -357,7 +367,6 @@ def main():
         render_audit_log_portal(fetch_meta, selected_period)
 
     else:
-        # STEP 8 & 9: Generate data-driven pages from the filtered framework dataframe
         st.markdown(f'<div class="section-label">{selected_page} Management Framework Hub</div>', unsafe_allow_html=True)
         
         cols = st.columns(min(len(unique_metrics), 4))
@@ -368,7 +377,6 @@ def main():
             with cols[i % 4]:
                 render_kpi_card_layout(metric, c_val, p_val, units_registry.get(metric, ""))
 
-        # STEP 8: Charts built from the workbook records
         from charts.env_visuals import (
             render_waste_efficiency_hybrid_chart,
             render_waste_stream_stacked_chart,
