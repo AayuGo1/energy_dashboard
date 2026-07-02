@@ -1,7 +1,6 @@
-# config.py
 """
 Centralized Enterprise Configuration System for Jubilant FoodWorks Limited.
-Acts as the absolute single source of truth for branding, analytics architecture, and data pipelines.
+Acts as the single source of truth for app metadata, pipeline configurations, and thresholds.
 """
 import os
 
@@ -11,9 +10,9 @@ import os
 COMPANY_NAME = "Jubilant FoodWorks Limited"
 COMPANY_INITIALS = "JFL"
 DASHBOARD_TITLE = "Enterprise Analytics Portal"
-DASHBOARD_TITLE_SUB = "Executive Sustainability Analytics Platform"
+DASHBOARD_TITLE_SUB = "Executive Sustainability & Environmental Portal"
 CURRENT_FISCAL_YEAR = "2026"
-SIDEBAR_LOGO_TEXT = "JFL-BI"
+SIDEBAR_LOGO_TEXT = "JFL-ENV"
 
 # =============================================================================
 # DATA SOURCE PIPELINE PROPERTIES
@@ -49,26 +48,7 @@ LOG_LEVEL = os.environ.get("JFL_LOG_LEVEL", "INFO")
 # =============================================================================
 # REQUIRED CORE SCHEMA VALIDATION METADATA
 # =============================================================================
-REQUIRED_SHEETS = ["H&S", "Environment"]
-REQUIRED_KPI_LABELS = {
-    "H&S": [
-        "Fatalities", "Lost Time Injury", "Total recordable accidents",
-        "First Aid Accident", "Near miss", "% of UA/UC Closure",
-        "Safety observation worker involvement % [%]",
-    ],
-    "Environment": [
-        "Total energy consumption [kWh/Gross Weight (t Metric)]",
-        "Total water withdrawal [m³/Gross Weight (t Metric)]",
-        "Total waste per t(Metrics) [kg/Gross Weight (t Metric)]",
-        "Production Volume - Gross Weight [Gross Weight (t Metric)]",
-    ],
-}
-
-# =============================================================================
-# SECURITY CONTROLS & COMPLIANCE
-# =============================================================================
-VIEW_ROLES = ["Executive Director", "Sustainability Lead", "EHS Audit Officer"]
-DEFAULT_VIEW_ROLE = os.environ.get("JFL_DEFAULT_ROLE", "Sustainability Lead")
+REQUIRED_SHEETS = ["Environment"]
 
 # =============================================================================
 # RISK CONTROL PROFILE MATRIX DEFINITIONS
@@ -76,15 +56,7 @@ DEFAULT_VIEW_ROLE = os.environ.get("JFL_DEFAULT_ROLE", "Sustainability Lead")
 ANOMALY_PCT_THRESHOLD = float(os.environ.get("JFL_ANOMALY_PCT_THRESHOLD", "25"))
 
 KPI_THRESHOLDS = {
-    "fatalities":            {"direction": "lower_better",  "red": 1,    "yellow": 0.001},
-    "lost time injury":      {"direction": "lower_better",  "red": 3,    "yellow": 1},
-    "total recordable accidents": {"direction": "lower_better", "red": 8, "yellow": 4},
-    "first aid accident":    {"direction": "lower_better",  "red": 12,   "yellow": 6},
-    "near miss":             {"direction": "lower_better",  "red": None, "yellow": None},
-    "% of ua/uc closure":    {"direction": "higher_better", "red": 0.70, "yellow": 0.85},
-    "safety observation worker involvement % [%]": {"direction": "higher_better", "red": 0.60, "yellow": 0.80},
-    "total energy consumption [kwh/gross weight (t metric)]": {"direction": "lower_better", "red": None, "yellow": None},
-    "total water withdrawal [m³/gross weight (t metric)]":    {"direction": "lower_better", "red": None, "yellow": None},
-    "total waste per t(metrics) [kg/gross weight (t metric)]": {"direction": "lower_better", "red": None, "yellow": None},
-    "production volume - gross weight [gross weight (t metric)]": {"direction": "higher_better", "red": None, "yellow": None},
+    "total energy consumption": {"direction": "lower_better", "red": None, "yellow": None},
+    "total water withdrawal":    {"direction": "lower_better", "red": None, "yellow": None},
+    "total waste per t":         {"direction": "lower_better", "red": None, "yellow": None},
 }
