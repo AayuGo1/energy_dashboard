@@ -1,6 +1,6 @@
-# charts/env_visuals.py
 """
 Plotly Analytics Charts — Sustainability Visual Systems Engine.
+Provides clean, responsive components completely driven by workbook metadata and units.
 """
 import plotly.graph_objects as go
 import pandas as pd
@@ -16,18 +16,18 @@ def render_waste_efficiency_hybrid_chart(df_long: pd.DataFrame, units_registry: 
     b_grp = prod_df.groupby("Period", as_index=False)["Value"].mean()
     l_grp = waste_df.groupby("Period", as_index=False)["Value"].mean()
 
-    prod_unit = units_registry.get(prod_df["Metric"].iloc[0], "t")
-    waste_unit = units_registry.get(waste_df["Metric"].iloc[0], "kg/t")
+    prod_unit = units_registry.get(prod_df["Metric"].iloc[0], "")
+    waste_unit = units_registry.get(waste_df["Metric"].iloc[0], "")
 
     fig = go.Figure()
     fig.add_trace(go.Bar(x=b_grp["Period"], y=b_grp["Value"], name=f"Production Output ({prod_unit})", marker_color="#E2E8F0", opacity=0.8, yaxis="y1"))
     fig.add_trace(go.Scatter(x=l_grp["Period"], y=l_grp["Value"], name=f"Waste Intensity ({waste_unit})", mode="lines+markers", line=dict(color=PAL["primary"], width=3, shape="spline"), yaxis="y2"))
     fig.update_layout(
-        yaxis=dict(title=f"Production Volume [{prod_unit}]", showgrid=False),
-        yaxis2=dict(title=f"Waste Intensity [{waste_unit}]", overlaying="y", side="right", showgrid=True, gridcolor=PAL["border"]),
+        yaxis=dict(title=f"Production Volume ({prod_unit})", showgrid=False),
+        yaxis2=dict(title=f"Waste Intensity ({waste_unit})", overlaying="y", side="right", showgrid=True, gridcolor=PAL["border"]),
         hovermode="x unified"
     )
-    fig = apply_enterprise_layout(fig, height=360, title="🏭 Production Output vs Material Waste Intensity Curve", legend=True)
+    fig = apply_enterprise_layout(fig, height=360, title="🏭 Output Correlation Matrix: Volume vs Generation Intensity", legend=True)
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 def render_waste_stream_stacked_chart(df_long: pd.DataFrame, units_registry: dict):
@@ -40,9 +40,9 @@ def render_waste_stream_stacked_chart(df_long: pd.DataFrame, units_registry: dic
     merged = pd.merge(non_haz_data, haz_data, on="Period", how="outer", suffixes=("_NonHaz", "_Haz")).fillna(0)
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=merged["Period"], y=merged["Value_NonHaz"], name="Non-Hazardous (kg)", marker_color=PAL["primary"]))
-    fig.add_trace(go.Bar(x=merged["Period"], y=merged["Value_Haz"], name="Hazardous (kg)", marker_color=PAL["primary-2"]))
-    fig.update_layout(barmode="stack", hovermode="x unified", yaxis=dict(title="Waste Mass [kg]"))
+    fig.add_trace(go.Bar(x=merged["Period"], y=merged["Value_NonHaz"], name="Non-Hazardous Component (kg)", marker_color=PAL["primary"]))
+    fig.add_trace(go.Bar(x=merged["Period"], y=merged["Value_Haz"], name="Hazardous Component (kg)", marker_color=PAL["primary-2"]))
+    fig.update_layout(barmode="stack", hovermode="x unified", yaxis=dict(title="Mass Allocation [kg]"))
     fig = apply_enterprise_layout(fig, height=360, title="🗑 Segregated Material Balance Composition Matrix", legend=True)
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
@@ -51,12 +51,12 @@ def render_water_discharge_spline(df_long: pd.DataFrame, units_registry: dict):
     if water_df.empty:
         return
     grp = water_df.groupby("Period", as_index=False)["Value"].mean()
-    unit = units_registry.get(water_df["Metric"].iloc[0], "m³")
+    unit = units_registry.get(water_df["Metric"].iloc[0], "")
     
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=grp["Period"], y=grp["Value"], mode="lines+markers", fill="tozeroy", line=dict(color=PAL["success"], width=2.5, shape="spline"), fillcolor="rgba(16, 185, 129, 0.05)"))
-    fig.update_layout(yaxis=dict(title=f"Water Withdrawal [{unit}]"))
-    fig = apply_enterprise_layout(fig, height=300, title=f"💧 Hydraulic Intake Intensity Curve [{unit}]", legend=False)
+    fig.update_layout(yaxis=dict(title=f"Water Volume ({unit})"))
+    fig = apply_enterprise_layout(fig, height=300, title=f"💧 Hydraulic Intake Intensity Curve ({unit})", legend=False)
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 def render_dynamic_hybrid_overlay(df_filtered: pd.DataFrame, title: str, bar_metric: str, line_metric: str, units_registry: dict):
@@ -75,8 +75,8 @@ def render_dynamic_hybrid_overlay(df_filtered: pd.DataFrame, title: str, bar_met
     fig.add_trace(go.Bar(x=b_grp["Period"], y=b_grp["Value"], name=f"{bar_metric} ({b_unit})", marker_color="#E2E8F0", opacity=0.85, yaxis="y1"))
     fig.add_trace(go.Scatter(x=l_grp["Period"], y=l_grp["Value"], name=f"{line_metric} ({l_unit})", mode="lines+markers", line=dict(color=PAL["primary"], width=3, shape="spline"), yaxis="y2"))
     fig.update_layout(
-        yaxis=dict(title=f"{bar_metric} [{b_unit}]", showgrid=False),
-        yaxis2=dict(title=f"{line_metric} [{l_unit}]", overlaying="y", side="right", showgrid=True, gridcolor=PAL["border"]),
+        yaxis=dict(title=f"{bar_metric} ({b_unit})", showgrid=False),
+        yaxis2=dict(title=f"{line_metric} ({l_unit})", overlaying="y", side="right", showgrid=True, gridcolor=PAL["border"]),
         hovermode="x unified"
     )
     fig = apply_enterprise_layout(fig, height=360, title=title, legend=True)
@@ -91,6 +91,6 @@ def render_single_trajectory_area(df_filtered: pd.DataFrame, target_metric_subst
     
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=grp["Period"], y=grp["Value"], mode="lines+markers", fill="tozeroy", line=dict(color=color_hex, width=2.5, shape="spline"), fillcolor=f"{color_hex}12"))
-    fig.update_layout(yaxis=dict(title=f"Value [{unit}]"))
-    fig = apply_enterprise_layout(fig, height=300, title=f"{title} [{unit}]", legend=False)
+    fig.update_layout(yaxis=dict(title=f"Value ({unit})"))
+    fig = apply_enterprise_layout(fig, height=300, title=f"{title} ({unit})", legend=False)
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
