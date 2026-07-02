@@ -35,13 +35,6 @@ from helpers.formatting import (
     apply_enterprise_layout
 )
 from transformers.unpivot import infer_and_melt_workbook_metadata
-from charts.env_visuals import (
-    render_waste_efficiency_hybrid_chart,
-    render_waste_stream_stacked_chart,
-    render_water_discharge_spline,
-    render_dynamic_hybrid_overlay,
-    render_single_trajectory_area,
-)
 
 logger = get_logger()
 CACHE_TTL_SECONDS = config.RAW_FILE_CACHE_TTL_SECONDS
@@ -97,7 +90,7 @@ def inject_portal_design_language():
     p = PAL
     st.markdown(f"""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght=400;500;600;700;800&display=swap');
     :root {{
         --bg:{p['bg']}; --surface:{p['surface']}; --surface-alt:{p['surface-alt']};
         --border:{p['border']}; --text-hi:{p['text-hi']}; --text-mid:{p['text-mid']};
@@ -205,8 +198,7 @@ def render_sidebar():
     return status_placeholder
 
 def render_status(placeholder, connected: bool, last_refresh: str, is_fallback: bool = False, note: str = ""):
-    with placeholder.container():
-        pass # Sidebar implementation wrapper kept for diagnostics compatibility mapping
+    pass
 
 def render_kpi_card_layout(metric_name, value, prev_value, unit):
     display_val = fmt_number(value)
@@ -216,7 +208,7 @@ def render_kpi_card_layout(metric_name, value, prev_value, unit):
             v, p = float(value), float(prev_value)
             diff = v - p
             if abs(diff) < 1e-9:
-                pill_class, arrow, delta_str = "flat", "▬", "No change"
+                pill_class, arrow, delta_str = "flat", "▬", "No variance"
             elif abs(p) > 1e-9:
                 pct = (diff / abs(p)) * 100
                 arrow = "▲" if diff > 0 else "▼"
@@ -241,16 +233,18 @@ def render_kpi_card_layout(metric_name, value, prev_value, unit):
     """, unsafe_allow_html=True)
 
 def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics: list, selected_period: str, previous_period: str, units_registry: dict):
-    """
-    100% Metadata-driven layout renderer engine. Eliminates hardcoded page configurations 
-    by slicing long frames dynamically by inferred functional target names.
-    """
+    from charts.env_visuals import (
+        render_waste_efficiency_hybrid_chart,
+        render_waste_stream_stacked_chart,
+        render_water_discharge_spline,
+        render_dynamic_hybrid_overlay,
+        render_single_trajectory_area,
+    )
     st.markdown(f'<div class="section-label">{page_key} Executive Analytical Framework</div>', unsafe_allow_html=True)
     
     df_page_long = df_long[df_long["Page"] == page_key]
-    df_period = df_page_long[df_long["Period"] == selected_period]
+    df_period = df_page_long[df_page_long["Period"] == selected_period]
     
-    # 1. Executive Summary Cards Pass
     cols = st.columns(min(len(page_metrics), 4))
     for i, metric in enumerate(page_metrics[:4]):
         m_subset = df_page_long[df_page_long["Metric"] == metric]
@@ -259,7 +253,6 @@ def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics
         with cols[i % 4]:
             render_kpi_card_layout(metric, c_val, p_val, units_registry.get(metric, ""))
             
-    # 2. Dynamic Charts Block (Monthly and Historical Trends Overlay)
     st.markdown('<div class="section-label">Trend Matrix & Target Analysis Projections</div>', unsafe_allow_html=True)
     if page_key == "Waste":
         c_left, c_right = st.columns(2)
@@ -285,7 +278,6 @@ def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics
             render_single_trajectory_area(df_page_long, page_metrics[0], f"📈 Historical Longitudinal Evaluation Timeline Profile: {page_metrics[0]}", PAL["primary"])
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # 3. Supplemental KPI Metrics Sub-Grid Array
     if len(page_metrics) > 4:
         st.markdown('<div class="section-label">Extended Operational Performance Indices Grid</div>', unsafe_allow_html=True)
         grid_metrics = page_metrics[4:]
@@ -299,7 +291,6 @@ def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics
                 with col:
                     render_kpi_card_layout(metric, c_val, p_val, units_registry.get(metric, ""))
 
-    # 4. Raw Monthly Filtered Data Explorer Table & CSV Text Segment Exportation
     st.markdown('<div class="section-label">Granular Periodic Data Table Record Sets</div>', unsafe_allow_html=True)
     df_table_out = df_period[["Category", "Subcategory", "Metric", "Value", "Unit"]].reset_index(drop=True)
     with st.expander("📄 Query Segment Database Records Grid", expanded=False):
@@ -337,14 +328,14 @@ def main():
     timeline_periods = meta_bundle["periods"]
     units_registry = meta_bundle["units"]
 
-    # =============================================================================
-    # METADATA-DRIVEN SIDEBAR NAVIGATION INTERFACE
-    # =============================================================================
+    if df_long.empty:
+        st.error("⚠️ Zero entries could be parsed from data source maps.")
+        st.stop()
+
     with st.sidebar:
         nav_menu_options = ["🏠 Executive Overview"]
         for catalog_page in sorted(list(catalog.keys())):
             if catalog_page != "Executive Overview":
-                # Determine appropriate visual prefix icon dynamically
                 emoji_icon = "🌍"
                 if "safety" in catalog_page.lower(): emoji_icon = "🦺"
                 elif "energy" in catalog_page.lower(): emoji_icon = "⚡"
@@ -354,9 +345,8 @@ def main():
                 nav_menu_options.append(f"{emoji_icon} {catalog_page}")
                 
         nav_menu_options.extend(["📈 Trends Analytics", "⚙️ Admin / Diagnostics"])
-        selected_page_raw = st.radio("Access Console Target Area", options=nav_menu_options, label_visibility="collapsed")
+        selected_page_raw = st.radio("Access Portal Section", options=nav_menu_options, label_visibility="collapsed")
         
-        # Strip decorators to extract pure structural indexing string keys
         selected_page = re.sub(r"[^\w\s&]", "", selected_page_raw).strip()
         if "Executive Overview" in selected_page: selected_page = "Executive Overview"
         elif "Trends Analytics" in selected_page: selected_page = "Trends"
@@ -367,7 +357,6 @@ def main():
         idx = timeline_periods.index(selected_period)
         previous_period = timeline_periods[idx - 1] if idx > 0 else None
 
-    # Sync primary dictionary mappings to fuel derived validation telemetry matrixes
     kpi_dict_payload = {}
     for m in df_long["Metric"].unique().tolist():
         m_subset = df_long[df_long["Metric"] == m]
@@ -378,7 +367,6 @@ def main():
         stable_payload_hash, kpi_dict_payload, tuple(timeline_periods), selected_period, compute_hse_score_dynamic
     )
 
-    # --- TOP PORTAL HEADER STATUS INDICATOR MARKERS ---
     current_date_str = datetime.now().strftime("%A, %d %B %Y")
     status_marker = "Live · Connected" if fetch_meta.get("source") == "live" else "Snapshot Cache Active"
     status_color = "var(--success)" if fetch_meta.get("source") == "live" else "var(--warning)"
@@ -386,7 +374,7 @@ def main():
     st.markdown(f"""
         <div class="app-header">
             <div class="app-header-left">
-                <div class="app-header-icon">📊</div>
+                <div class="app-header-icon"> </div>
                 <div>
                     <h1>{config.COMPANY_NAME}</h1>
                     <p>{config.DASHBOARD_TITLE} — Active Context Module: <b>{selected_page}</b></p>
@@ -403,11 +391,6 @@ def main():
     if schema_warnings:
         st.sidebar.warning(f"Validation Notice: {len(schema_warnings)} template variations captured.")
 
-    # =============================================================================
-    # METADATA PORTAL PAGE CONSOLE ROUTING MATRIX
-    # =============================================================================
-    
-    # 1. EXECUTIVE OVERVIEW PAGE (Summaries and Risk Matrix blocks only; zero raw grids)
     if selected_page == "Executive Overview":
         st.markdown('<div class="section-label">Enterprise Executive Summary & Composite Scores Balance</div>', unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
@@ -443,21 +426,19 @@ def main():
                 st.markdown(f'<div class="stat-mini"><span class="stat-label">{r["Metric"][:35]}</span><span class="stat-value">{fmt_number(r["Value"])} {r["Unit"]}</span></div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # 2. GLOBAL LONVERS TREND METRICS SELECTION OVERVIEW ENGINE
     elif selected_page == "Trends":
+        from charts.env_visuals import render_single_trajectory_area
         st.markdown('<div class="section-label">Longitudinal Trends Visual Optimization Engine</div>', unsafe_allow_html=True)
         metric_selection = st.selectbox("Isolate Discovered Variable Key Axis to Graph", options=sorted(unique_metrics))
         st.markdown('<div class="exec-card">', unsafe_allow_html=True)
         render_single_trajectory_area(df_long, metric_selection, f"📈 Historical Longitudinal Evaluation Timeline Profile: {metric_selection}", PAL["primary"])
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # 3. ADMINISTRATIVE ISOLATION PAGE (Diagnostics logs, Schema warnings array and API parameters context)
     elif selected_page == "Diagnostics":
         if schema_warnings:
             fetch_meta["warning"] = f"Workbook layout schema validation exceptions: {'; '.join(schema_warnings)}"
         render_audit_log_portal(fetch_meta, selected_period)
 
-    # 4. METADATA DETECTED VARIABLE TARGET VIEW ROUTING PASSES
     else:
         if selected_page in catalog:
             render_metadata_page_view(selected_page, df_long, catalog[selected_page], selected_period, previous_period, units_registry)
