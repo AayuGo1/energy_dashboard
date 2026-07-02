@@ -1,15 +1,15 @@
-# data_pipeline.py
 """
-Data Pipeline Hardening Subsystem — Ingestion Framework with Safe Snapshots.
-Handles raw binary streaming from GitHub with robust local fallbacks.
-Does NOT parse workbook data structures or classify KPIs here.
+Data Pipeline Hardening Subsystem — Ingestion Framework with Snapshot Fallbacks.
+Restores and exports every public API signature expected by downstream application components.
 """
 import os
+import re
 import json
 import logging
 from io import BytesIO
 from datetime import datetime
 import requests
+import pandas as pd
 from openpyxl import load_workbook
 import config
 
@@ -77,6 +77,15 @@ def fetch_workbook_hardened(url: str, cache_key: str, _fetch_fn):
         logger.error("No fallback operational snapshot database found on disk storage systems.")
         raise
 
+def load_all_sheets_raw(file_bytes: bytes) -> dict:
+    """Restored to explicitly satisfy legacy structural data requirements."""
+    sheets = pd.read_excel(BytesIO(file_bytes), sheet_name=None, engine="openpyxl")
+    cleaned = {}
+    for name, df in sheets.items():
+        if df is None or df.empty: continue
+        cleaned[name] = df.dropna(axis=0, how="all")
+    return cleaned
+
 def validate_schema(file_bytes: bytes) -> list:
     issues = []
     try:
@@ -100,7 +109,6 @@ def resolve_latest_file_url(fallback_url: str) -> str:
         resp.raise_for_status()
         items = resp.json()
         files = [f for f in items if isinstance(f, dict) and f.get("name", "").lower().endswith(".xlsx")]
-        import re
         latest_pattern = re.compile(config.LATEST_FILENAME_PATTERN, re.IGNORECASE)
         candidates = [f for f in files if latest_pattern.match(f["name"])]
         if not candidates:
