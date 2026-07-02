@@ -1,4 +1,3 @@
-# app.py
 """
 Jubilant FoodWorks Limited — Modern Enterprise Analytics Portal.
 100% Data-driven architecture deriving parameters directly from Excel structural taxonomy.
@@ -37,11 +36,9 @@ from transformers.unpivot import infer_and_melt_workbook_metadata
 
 logger = get_logger()
 CACHE_TTL_SECONDS = config.RAW_FILE_CACHE_TTL_SECONDS
-PLOTLY_BG = "rgba(0,0,0,0)"
 
-# Consolidated 100% browser canvas display override initialization
 st.set_page_config(
-    page_title=f"{config.COMPANY_NAME} | Enterprise Analytics Portal",
+    page_title=f"{config.COMPANY_NAME} | Environmental Analytics Portal",
     page_icon="📊", layout="wide", initial_sidebar_state="expanded"
 )
 
@@ -53,7 +50,6 @@ def compute_hse_score_dynamic(kpi_dict: dict, periods_list: list, target_period:
             if any(k in key for k in incident_keywords):
                 val = timeline.get(target_period, 0)
                 total_incidents += float(val) if val and not pd.isna(val) else 0.0
-                
         closure_rate = 1.0
         for key, timeline in kpi_dict.items():
             if "closure" in key or "uauc" in key:
@@ -64,7 +60,7 @@ def compute_hse_score_dynamic(kpi_dict: dict, periods_list: list, target_period:
         final_score = max(0.0, min(100.0, base_score * (0.6 + (0.4 * closure_rate))))
         return round(final_score, 1)
     except Exception as e:
-        logger.error(f"Dynamic safety evaluation engine intercept anomaly: {e}")
+        logger.error(f"Dynamic safety evaluation calculation exception: {e}")
         return 100.0
 
 def get_remote_cache_key(url: str) -> str:
@@ -107,8 +103,6 @@ def inject_portal_design_language():
     #MainMenu, footer {{visibility:hidden;}}
     header[data-testid="stHeader"] {{background:transparent;}}
     .stApp {{ background:var(--bg); color:var(--text-hi); }}
-    
-    /* 100% Browser Responsive Canvas Constraints Layout Overrides */
     .main .block-container {{ max-width: 100% !important; padding: 1.5rem 3rem !important; }}
 
     section[data-testid="stSidebar"] {{ background:var(--surface); border-right:1px solid var(--border); padding-top: 1rem; }}
@@ -200,7 +194,7 @@ def render_sidebar():
                 </div>
             </div>
         """, unsafe_allow_html=True)
-        st.markdown('<div class="sb-section-title">🗂 Navigation Systems</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sb-section-title">🗂 Portal Hub Navigation</div>', unsafe_allow_html=True)
         status_placeholder = st.empty()
     return status_placeholder
 
@@ -249,7 +243,6 @@ def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics
     df_page_long = df_long[df_long["Page"] == page_key]
     df_period = df_page_long[df_page_long["Period"] == selected_period]
     
-    # Render discovered row metrics elements cleanly
     cols = st.columns(min(len(page_metrics), 4))
     for i, metric in enumerate(page_metrics[:4]):
         m_subset = df_page_long[df_page_long["Metric"] == metric]
@@ -296,7 +289,7 @@ def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics
                 with col:
                     render_kpi_card_layout(metric, c_val, p_val, units_registry.get(metric, ""))
 
-    st.markdown('<div class="section-label">Raw Monthly Segment Data Table Explorer</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Raw Monthly Data Grid View</div>', unsafe_allow_html=True)
     df_table_out = df_period[["Category", "Subcategory", "Metric", "Value", "Unit"]].reset_index(drop=True)
     with st.expander("📄 Query Segment Database Records Grid", expanded=False):
         st.dataframe(df_table_out, use_container_width=True, height=280)
@@ -337,18 +330,17 @@ def main():
         st.error("⚠️ Zero entries could be parsed from data source maps.")
         st.stop()
 
-    # Exact hierarchical navigation layout definitions as requested by user
+    # Exact parent menu navigation items structure constraint pass
     with st.sidebar:
         nav_menu_options = [
             "Executive Overview", 
-            "Health & Safety", 
             "Energy", 
             "Water", 
             "Waste"
         ]
         selected_page = st.radio("Access Console Target Area", options=nav_menu_options, label_visibility="collapsed")
 
-        st.markdown('<div class="sb-section-title">⏱ Timeline Range Focus</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sb-section-title">⏱ Timeline Focus</div>', unsafe_allow_html=True)
         selected_period = st.selectbox("Active Period Window", options=timeline_periods, index=len(timeline_periods)-1)
         
         idx = timeline_periods.index(selected_period)
@@ -388,15 +380,12 @@ def main():
         </div>
     """, unsafe_allow_html=True)
 
-    if schema_warnings:
-        st.sidebar.warning(f"Validation Warning: {len(schema_warnings)} variation flags logged.")
-
-    # --- ROUTING CONTROL WORKFLOWS ---
+    # --- METADATA ROUTING PASSTHROUGH MATRIX CONTROL ---
     if selected_page == "Executive Overview":
-        st.markdown('<div class="section-label">Enterprise Executive Summary & Composite Performance Index</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-label">Enterprise Executive Summary & Compliance Anomalies</div>', unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary);"><div class="kpi-top-row"><div class="kpi-icon-badge">🎯</div><div class="kpi-trend-pill flat">HSE Score</div></div><div class="kpi-value">{derivatives['hse_score']} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">/ 100</span></div><div class="kpi-label">Dynamic Corporate Safety Rating Index</div><div class="kpi-compare">Active Evaluation Period: <b>{selected_period}</b></div></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary);"><div class="kpi-top-row"><div class="kpi-icon-badge">🎯</div><div class="kpi-trend-pill flat">HSE Score</div></div><div class="kpi-value">{derivatives['hse_score']} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">/ 100</span></div><div class="kpi-label">Dynamic Operational safety Index Score</div><div class="kpi-compare">Active Evaluation Period: <b>{selected_period}</b></div></div>""", unsafe_allow_html=True)
         with c2:
             prod_val_series = df_long[(df_long["Page"] == "Production") & (df_long["Period"] == selected_period)]["Value"].dropna()
             total_prod_sum = prod_val_series.sum() if not prod_val_series.empty else 0.0
@@ -427,16 +416,16 @@ def main():
                 st.markdown(f'<div class="stat-mini"><span class="stat-label">{r["Metric"][:35]}</span><span class="stat-value">{fmt_number(r["Value"])} {r["Unit"]}</span></div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-        # Bottom diagnostics section appended strictly to Executive layout context floor
+        # Inject diagnostic logging block explicitly to floor of master summary view page
         if schema_warnings:
-            fetch_meta["warning"] = f"Workbook validation constraints logged: {'; '.join(schema_warnings)}"
+            fetch_meta["warning"] = f"Workbook layout schema validation exceptions: {'; '.join(schema_warnings)}"
         render_audit_log_portal(fetch_meta, selected_period)
 
     else:
         if selected_page in catalog:
             render_metadata_page_view(selected_page, df_long, catalog[selected_page], selected_period, previous_period, units_registry)
         else:
-            st.info("No active context items mapped under this category layout node.")
+            st.info("No active operational context items mapped under this category module.")
 
 
 if __name__ == "__main__":
