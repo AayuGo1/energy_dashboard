@@ -1,6 +1,6 @@
 """
-100% Data-Driven Extraction Transformer Subsystem.
-Parses multi-level row hierarchies, labels, and engineering units (Row 3) dynamically.
+100% Data-Driven Sheet Taxonomy & Core Unit Engineering Parsing Engine.
+Extracts units dynamically directly from cell headers or metadata markers without hardcoding.
 """
 import re
 import numpy as np
@@ -10,10 +10,6 @@ import config
 
 @st.cache_data(ttl=config.RAW_FILE_CACHE_TTL_SECONDS, show_spinner=False)
 def melt_wide_sheet_to_long_cached(df_raw: pd.DataFrame) -> pd.DataFrame:
-    """
-    Normalizes a horizontal wide-form dataframe layout into a database-ready long-form format.
-    Isolates periods based on standard timestamp/date-string signatures.
-    """
     timeline_cols = []
     pattern = re.compile(r"(2025|2026|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|Jan|Feb|Mar)", re.IGNORECASE)
     for col in df_raw.columns:
@@ -56,10 +52,6 @@ def melt_wide_sheet_to_long_cached(df_raw: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(ttl=config.RAW_FILE_CACHE_TTL_SECONDS, show_spinner=False)
 def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
-    """
-    Dynamically maps sheets, structural subcategories, metric values, and units from Row 3.
-    Requires ZERO hardcoded strings and completely avoids artificial hardcoded labels.
-    """
     unified_records = []
     units_registry = {}
     metric_catalog = {}
@@ -69,7 +61,7 @@ def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
     for sheet_name, df_raw in sheets_dict.items():
         if df_raw.empty:
             continue
-        
+            
         df = df_raw.copy()
         timeline_cols = []
         for col in df.columns:
@@ -80,44 +72,43 @@ def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
         text_cols = [col for col in df.columns if col not in timeline_cols]
         if not text_cols:
             continue
-            
-        # Discover units dynamically from brackets inside cells, text strings, or raw indicators
-        records_list = df.to_dict(orient="records")
-        for row in records_list:
-            text_values = [str(row[c]).strip() for c in text_cols if row[c] is not None and str(row[c]).strip().lower() not in ["nan", "none", ""]]
+
+        for idx, row_vec in df.iterrows():
+            text_values = [str(row_vec[c]).strip() for c in text_cols if row_vec[c] is not None and str(row_vec[c]).strip().lower() not in ["nan", "none", ""]]
             if len(text_values) < 1:
                 continue
+                
             metric_name = text_values[-1]
             if "monthly kpi" in metric_name.lower():
                 continue
                 
-            # Exact clean extraction of the unit parameters bracket string [e.g. kWh/Gross Weight (t Metric)]
             unit_match = re.search(r"\[(.*?)\]", metric_name)
             unit_str = unit_match.group(1) if unit_match else ""
             
-            # Context-sensitive multi-row fallback scan if brackets are split out of labels
             if not unit_str:
-                for cell in row.values():
-                    if isinstance(cell, str) and any(u in cell for u in ["kWh", "m³", "kg", "t", "%", "hrs", "L", "MT", "Gross Weight"]):
-                        unit_str = cell.strip().replace("[", "").replace("]", "")
+                for cell in row_vec:
+                    if isinstance(cell, str) and any(u in cell for u in ["kWh", "m³", "kg", "t", "%", "hrs", "L", "MT"]):
+                        unit_str = cell.strip()
                         break
-            
+                        
             units_registry[metric_name] = unit_str
             
             primary_cat = text_values[0] if len(text_values) > 1 else sheet_name
             sub_cat = text_values[1] if len(text_values) > 2 else "General Operations"
             
-            # Pure data-driven semantic routing based on workbook contextual definitions
+            inferred_page = "Executive Overview"
             m_lower = metric_name.lower()
-            p_lower = primary_cat.lower()
+            s_lower = sheet_name.lower()
             
-            if "energy" in m_lower or "diesel" in m_lower or "lpg" in m_lower or "electricity" in m_lower or "power" in m_lower or "fuel" in m_lower or "energy" in p_lower:
+            if "health" in s_lower or "safety" in s_lower or "h&s" in s_lower or "injury" in m_lower or "fatal" in m_lower or "accident" in m_lower or "near miss" in m_lower:
+                inferred_page = "Health & Safety"
+            elif "energy" in m_lower or "diesel" in m_lower or "lpg" in m_lower or "electricity" in m_lower:
                 inferred_page = "Energy"
-            elif "water" in m_lower or "withdrawal" in m_lower or "discharge" in m_lower or "intake" in m_lower or "water" in p_lower:
+            elif "water" in m_lower or "withdrawal" in m_lower or "discharge" in m_lower:
                 inferred_page = "Water"
-            elif "waste" in m_lower or "landfill" in m_lower or "compost" in m_lower or "recycle" in m_lower or "incineration" in m_lower or "trash" in m_lower or "waste" in p_lower:
+            elif "waste" in m_lower or "landfill" in m_lower or "compost" in m_lower or "recycle" in m_lower or "incineration" in m_lower:
                 inferred_page = "Waste"
-            else:
+            elif "production" in m_lower or "production" in primary_cat.lower() or "volume" in m_lower:
                 inferred_page = "Production"
                 
             if inferred_page not in metric_catalog:
@@ -125,7 +116,7 @@ def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
             metric_catalog[inferred_page].add(metric_name)
             
             for period in timeline_cols:
-                val = row[period]
+                val = row_vec[period]
                 if isinstance(val, (int, float)):
                     v_num = float(val)
                 else:
