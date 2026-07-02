@@ -58,7 +58,7 @@ def apply_enterprise_layout(fig, height=340, title=None, legend=True):
         margin=dict(l=10, r=10, t=50 if title else 20, b=10),
         height=height, showlegend=legend,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11, color=PAL["text-mid"]), bgcolor="rgba(0,0,0,0)"),
-        hoverlabel=dict(bgcolor=PAL["surface"], font_size=12, font_family="Inter", bordercolor=PAL["border"]),
+        hoverlabel=dict(bgcolor=PAL(--text-mid if 'PAL' not in globals() else PAL["surface"]), font_size=12, font_family="Inter", bordercolor=PAL["border"]),
         colorway=[PAL["primary"], PAL["success"], PAL["warning"], PAL["primary-2"]],
     )
     fig.update_xaxes(showgrid=False, zeroline=False, color=PAL["text-mid"], linecolor=PAL["border"])
