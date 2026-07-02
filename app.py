@@ -1,3 +1,4 @@
+# app.py
 """
 Jubilant FoodWorks Limited — Modern Enterprise Analytics Portal UI.
 Orchestrates fully restored components through data-driven metadata workbook topologies.
@@ -39,6 +40,43 @@ logger = get_logger()
 CACHE_TTL_SECONDS = config.RAW_FILE_CACHE_TTL_SECONDS
 PLOTLY_BG = "rgba(0,0,0,0)"
 
+# Consolidated wide canvas layout overrides initialization
+st.set_page_config(
+    page_title=f"{config.COMPANY_NAME} | Enterprise Analytics Portal",
+    page_icon="📊", layout="wide", initial_sidebar_state="expanded"
+)
+
+def compute_hse_score_dynamic(kpi_dict: dict, periods_list: list, target_period: str) -> float:
+    try:
+        total_incidents = 0.0
+        incident_keywords = ["fatalit", "injury", "accident", "near miss"]
+        for key, timeline in kpi_dict.items():
+            if any(k in key for k in incident_keywords):
+                val = timeline.get(target_period, 0)
+                total_incidents += float(val) if val and not pd.isna(val) else 0.0
+        closure_rate = 1.0
+        for key, timeline in kpi_dict.items():
+            if "closure" in key or "uauc" in key:
+                rate = timeline.get(target_period, 1.0)
+                closure_rate = float(rate) if rate and not pd.isna(rate) else 1.0
+                break
+        base_score = 100.0 - (total_incidents * 4.5)
+        final_score = max(0.0, min(100.0, base_score * (0.6 + (0.4 * closure_rate))))
+        return round(final_score, 1)
+    except Exception as e:
+        logger.error(f"Dynamic safety evaluation calculation exception: {e}")
+        return 100.0
+
+def get_remote_cache_key(url: str) -> str:
+    try:
+        resp = requests.head(url, timeout=10, allow_redirects=True)
+        tag = resp.headers.get("ETag") or resp.headers.get("Last-Modified")
+        if tag: return tag
+    except requests.RequestException:
+        pass
+    return str(int(time.time() // CACHE_TTL_SECONDS))
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def fetch_workbook_bytes(url: str, cache_key: str) -> bytes:
     resp = requests.get(url, timeout=25)
     resp.raise_for_status()
@@ -140,8 +178,61 @@ def inject_portal_design_language():
     </style>
     """, unsafe_allow_html=True)
 
-def render_kpi_grid_layout(metric_name, value, prev_value, unit):
-    render_kpi_card_layout(metric_name, value, prev_value, unit)
+def render_sidebar():
+    """
+    Reconstructed core sidebar API implementation to restore complete
+    downstream routing and placeholder state expectations without breaking changes.
+    """
+    with st.sidebar:
+        st.markdown(f"""
+            <div class="sb-brand">
+                <div class="sb-logo-chip">{config.SIDEBAR_LOGO_TEXT}</div>
+                <div>
+                    <div class="sb-brand-name">{config.COMPANY_NAME}</div>
+                    <div class="sb-brand-sub">{config.DASHBOARD_TITLE_SUB}</div>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+        st.markdown('<div class="sb-section-title">📡 Data Source Status</div>', unsafe_allow_html=True)
+        status_placeholder = st.empty()
+        
+        if st.button("🔄  Refresh Data"):
+            st.rerun()
+            
+        st.markdown('<div class="sb-section-title">🧭 Navigation Menu</div>', unsafe_allow_html=True)
+    return status_placeholder
+
+def render_kpi_card_layout(metric_name, value, prev_value, unit):
+    display_val = fmt_number(value)
+    pill_class, arrow, delta_str = "flat", "▬", "Stable"
+    if value is not None and prev_value is not None:
+        try:
+            v, p = float(value), float(prev_value)
+            diff = v - p
+            if abs(diff) < 1e-9:
+                pill_class, arrow, delta_str = "flat", "▬", "No variance"
+            elif abs(p) > 1e-9:
+                pct = (diff / abs(p)) * 100
+                arrow = "▲" if diff > 0 else "▼"
+                is_bad_metric = any(k in metric_name.lower() for k in ["waste", "accident", "injury", "fatality", "diesel"])
+                pill_class = "good" if (diff <= 0 if is_bad_metric else diff > 0) else "bad"
+                delta_str = f"{arrow} {abs(pct):.1f}%"
+        except (ValueError, TypeError):
+            pass
+
+    st.markdown(f"""
+    <div class="kpi-card">
+        <div>
+            <div class="kpi-top-row">
+                <div class="kpi-icon-badge">{safe_icon_for_dynamic(metric_name)}</div>
+                <div class="kpi-trend-pill {pill_class}">{delta_str}</div>
+            </div>
+            <div class="kpi-value">{display_val} <span style="font-size:12px; font-weight:500; color:var(--text-mid);">{unit}</span></div>
+            <div class="kpi-card-label" style="font-size:12px; font-weight:500; color:var(--text-mid); margin-top:4px; text-transform:capitalize; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{metric_name}</div>
+        </div>
+        <div class="kpi-compare" style="margin-top:4px; font-size:11px; color:var(--text-lo); border-top:1px solid var(--surface-alt); padding-top:6px;">vs previous period: <b>{fmt_number(prev_value)}</b></div>
+    </div>
+    """, unsafe_allow_html=True)
 
 def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics: list, selected_month: str, previous_month: str, units_registry: dict):
     from charts.env_visuals import (
