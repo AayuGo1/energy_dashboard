@@ -1,6 +1,6 @@
 # kpi_engine.py
 """
-Derived Analytics Framework Caching & Structural Enterprise Risk Panels.
+KPI Calculation Engine — Derived Analytics, Anomalies, and Interface Containers.
 """
 import json
 import hashlib
@@ -17,19 +17,14 @@ def _stable_kpi_hash(kpis: dict) -> str:
 def get_kpi_status_dynamic(metric_name: str, value) -> str:
     if value is None or str(value).strip() == "" or value == "N/A":
         return "na"
-    
     norm_key = metric_name.lower().strip()
     cfg = None
-    
-    # Check matching parameters inside dynamic threshold configuration targets
     for target_key, config_vals in config.KPI_THRESHOLDS.items():
         if target_key in norm_key:
             cfg = config_vals
             break
-            
     if not cfg:
         return "na"
-        
     red, yellow, direction = cfg.get("red"), cfg.get("yellow"), cfg.get("direction")
     try:
         v = float(value)
@@ -83,7 +78,6 @@ def compute_portal_derivatives(payload_hash: str, kpi_dict: dict, periods_tuple:
 
 def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list, derivatives: dict):
     st.markdown('<div class="section-label">Exception Anomalies & Live Risk Panel Indicators</div>', unsafe_allow_html=True)
-    
     red_alerts = []
     yellow_alerts = []
     for metric_name, timeline in kpi_dict.items():
@@ -111,7 +105,7 @@ def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list,
         st.markdown('<div style="color: var(--danger); font-size: 13px; font-weight: 700; margin-bottom: 12px;">🚨 Critical Operational Breaches</div>', unsafe_allow_html=True)
         if red_alerts:
             for metric, val in red_alerts:
-                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric}</span><span class="stat-value" style="color: var(--danger);">{val:,.1f}</span></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric[:40]}</span><span class="stat-value" style="color: var(--danger);">{val:,.1f}</span></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="font-size: 12px; color: var(--text-lo);">Zero critical items flagged</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
@@ -121,7 +115,7 @@ def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list,
         st.markdown('<div style="color: var(--warning); font-size: 13px; font-weight: 700; margin-bottom: 12px;">⚠️ Threshold Boundaries Watchlist</div>', unsafe_allow_html=True)
         if yellow_alerts:
             for metric, val in yellow_alerts:
-                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric}</span><span class="stat-value" style="color: var(--warning);">{val:,.1f}</span></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric[:40]}</span><span class="stat-value" style="color: var(--warning);">{val:,.1f}</span></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="font-size: 12px; color: var(--text-lo);">Zero boundary warnings triggered</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
@@ -133,19 +127,25 @@ def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list,
             for a in anomalies[:5]:
                 arrow = "▲" if a["direction"] == "spike" else "▼"
                 color = "var(--danger)" if a["direction"] == "spike" and "waste" in a["metric"].lower() else "var(--primary)"
-                st.markdown(f'<div class="stat-mini"><span class="stat-label">{a["metric"]}</span><span class="stat-value" style="color: {color};">{arrow} {a["pct_change"]:+.1f}%</span></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{a["metric"][:40]}</span><span class="stat-value" style="color: {color};">{arrow} {a["pct_change"]:+.1f}%</span></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="font-size: 12px; color: var(--text-lo);">Zero extreme variations observed</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-def render_audit_log_portal(fetch_meta: dict, current_period: str):
-    st.markdown('<div class="section-label">Pipeline Operational Architecture Diagnostics & Telemetry</div>', unsafe_allow_html=True)
+def render_risk_panel(kpi_dict: dict, selected_month: str, prev_month, months_upto: list, card_meta: dict, derivatives: dict):
+    render_risk_panel_dynamic(kpi_dict, selected_month, months_upto, derivatives)
+
+def render_audit_log(fetch_meta: dict, selected_fy: str, selected_month: str):
+    st.markdown('<div class="section-label">Pipeline Operational Diagnostics Log</div>', unsafe_allow_html=True)
     st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-    status_badge = "🟢 Synchronized Live Secure Repository" if fetch_meta.get("source") == "live" else "⚠️ Disconnected Snapshot Cache Safe Mode"
-    st.markdown(f'<div class="stat-mini"><span class="stat-label">System Feed Integrity Profile</span><span class="stat-value">{status_badge}</span></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="stat-mini"><span class="stat-label">Ingestion Pulse Timestamp</span><span class="stat-value">{fetch_meta.get("fetched_at", "—")}</span></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="stat-mini"><span class="stat-label">Active Database Matrix Target</span><span class="stat-value">Fiscal Year {config.CURRENT_FISCAL_YEAR} · Period Window: {current_period}</span></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="stat-mini"><span class="stat-label">Data Source URI Access Path</span><span class="stat-value" style="font-family: monospace; font-size: 11px; color: var(--primary);">{fetch_meta.get("source_url", "—")}</span></div>', unsafe_allow_html=True)
+    source_badge = "🟢 Live Production Feed" if fetch_meta.get("source") == "live" else "⚠️ Disconnected Snapshot Backup Layer"
+    st.markdown(f'<div class="stat-mini"><span class="stat-label">System Feed Profile</span><span class="stat-value">{source_badge}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="stat-mini"><span class="stat-label">Refresh Execution Timestamp</span><span class="stat-value">{fetch_meta.get("fetched_at", "N/A")}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="stat-mini"><span class="stat-label">Active Audit Boundary Target</span><span class="stat-value">FY {selected_fy} · Period: {selected_month}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="stat-mini"><span class="stat-label">Endpoint String URI Mapping</span><span class="stat-value" style="font-family: monospace; font-size:11px;">{fetch_meta.get("source_url", "N/A")}</span></div>', unsafe_allow_html=True)
     if fetch_meta.get("warning"):
-        st.markdown(f'<div class="stat-mini" style="border-left: 3px solid var(--warning); background-color: #FFFBEB;"><span class="stat-label" style="color: var(--warning);">Intercept Warning Note</span><span class="stat-value" style="color: var(--warning); font-size: 11.5px;">{fetch_meta["warning"]}</span></div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-mini" style="border-left: 3px solid var(--warning); background-color: #FFFBEB;"><span class="stat-label" style="color: var(--warning);">Diagnostic Exception Notice</span><span class="stat-value" style="color: var(--warning); font-size:11.5px;">{fetch_meta["warning"]}</span></div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+def render_audit_log_portal(fetch_meta: dict, current_period: str):
+    render_audit_log(fetch_meta, config.CURRENT_FISCAL_YEAR, current_period)
