@@ -95,7 +95,7 @@ def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list,
             '<div class="exec-card" style="border-left: 4px solid var(--success);">'
             '<div class="status-row" style="color: var(--success) !important; font-size: 14px; font-weight: 600;">✓ Compliance Parameters Baseline Stable</div>'
             '<div style="font-size: 12px; color: var(--text-mid); margin-top: 4px;">Zero operations breaches recorded cross-checking target boundaries.</div></div>',
-            unsafe_allow_html=True
+            always_allow_html=True
         )
         return
 
@@ -105,7 +105,7 @@ def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list,
         st.markdown('<div style="color: var(--danger); font-size: 13px; font-weight: 700; margin-bottom: 12px;">🚨 Critical Operational Breaches</div>', unsafe_allow_html=True)
         if red_alerts:
             for metric, val in red_alerts:
-                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric[:40]}</span><span class="stat-value" style="color: var(--danger);">{val:,.1f}</span></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric}</span><span class="stat-value" style="color: var(--danger);">{val:,.1f}</span></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="font-size: 12px; color: var(--text-lo);">Zero critical items flagged</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
