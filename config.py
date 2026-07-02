@@ -1,3 +1,4 @@
+# config.py
 """
 Centralized Enterprise Configuration System for Jubilant FoodWorks Limited.
 Acts as the absolute single source of truth for branding, analytics architecture, and data pipelines.
@@ -62,12 +63,6 @@ REQUIRED_KPI_LABELS = {
         "Production Volume - Gross Weight [Gross Weight (t Metric)]",
     ],
 }
-
-# =============================================================================
-# SECURITY CONTROLS & COMPLIANCE
-# =============================================================================
-VIEW_ROLES = ["Executive Director", "Sustainability Lead", "EHS Audit Officer"]
-DEFAULT_VIEW_ROLE = os.environ.get("JFL_DEFAULT_ROLE", "Sustainability Lead")
 
 # =============================================================================
 # RISK CONTROL PROFILE MATRIX DEFINITIONS
