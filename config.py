@@ -1,7 +1,7 @@
 # config.py
 """
 Centralized Enterprise Configuration System for Jubilant FoodWorks Limited.
-Serves as the absolute single source of truth for the metadata-driven analytics portal.
+Acts as the absolute single source of truth for branding, analytics architecture, and data pipelines.
 """
 import os
 
