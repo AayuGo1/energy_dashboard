@@ -49,6 +49,14 @@ FALLBACK_SNAPSHOT_PATH = os.environ.get("GNSC_FALLBACK_SNAPSHOT", ".cache/last_g
 FALLBACK_META_PATH = os.environ.get("GNSC_FALLBACK_META", ".cache/last_good_meta.json")
 
 # =============================================================================
+# Application Branding
+# =============================================================================
+COMPANY_NAME = "Jubilant FoodWorks Limited"
+DASHBOARD_TITLE = "Enterprise KPI Analytics Dashboard"
+DASHBOARD_TITLE_SUB = "Executive Sustainability & EHS Analytics"
+CURRENT_FISCAL_YEAR = "2026"
+
+# =============================================================================
 # Required workbook schema (Phase 4 §1 — schema validation)
 # =============================================================================
 REQUIRED_SHEETS = ["H&S", "Environment"]
