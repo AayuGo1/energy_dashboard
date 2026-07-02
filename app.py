@@ -22,7 +22,7 @@ from data_pipeline import (
 )
 from kpi_engine import (
     _stable_kpi_hash,
-    compute_portal_derivatives,
+    compute_kpi_derivatives,
     render_risk_panel_dynamic,
     render_audit_log_portal,
 )
@@ -36,9 +36,11 @@ from transformers.unpivot import infer_and_melt_workbook_metadata
 
 logger = get_logger()
 CACHE_TTL_SECONDS = config.RAW_FILE_CACHE_TTL_SECONDS
+PLOTLY_BG = "rgba(0,0,0,0)"
 
+# Consolidated 100% browser canvas display override initialization
 st.set_page_config(
-    page_title=f"{config.COMPANY_NAME} | Environmental Analytics Portal",
+    page_title=f"{config.COMPANY_NAME} | Enterprise Analytics Portal",
     page_icon="📊", layout="wide", initial_sidebar_state="expanded"
 )
 
@@ -194,7 +196,7 @@ def render_sidebar():
                 </div>
             </div>
         """, unsafe_allow_html=True)
-        st.markdown('<div class="sb-section-title">🗂 Portal Hub Navigation</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sb-section-title">🗂 Portal Navigation</div>', unsafe_allow_html=True)
         status_placeholder = st.empty()
     return status_placeholder
 
@@ -238,7 +240,7 @@ def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics
         render_dynamic_hybrid_overlay,
         render_single_trajectory_area,
     )
-    st.markdown(f'<div class="section-label">{page_key} Management Hub</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-label">{page_key} Management Dashboard</div>', unsafe_allow_html=True)
     
     df_page_long = df_long[df_long["Page"] == page_key]
     df_period = df_page_long[df_page_long["Period"] == selected_period]
@@ -289,7 +291,7 @@ def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics
                 with col:
                     render_kpi_card_layout(metric, c_val, p_val, units_registry.get(metric, ""))
 
-    st.markdown('<div class="section-label">Raw Monthly Data Grid View</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Raw Monthly Segment Data Table Explorer</div>', unsafe_allow_html=True)
     df_table_out = df_period[["Category", "Subcategory", "Metric", "Value", "Unit"]].reset_index(drop=True)
     with st.expander("📄 Query Segment Database Records Grid", expanded=False):
         st.dataframe(df_table_out, use_container_width=True, height=280)
@@ -330,7 +332,7 @@ def main():
         st.error("⚠️ Zero entries could be parsed from data source maps.")
         st.stop()
 
-    # Exact parent menu navigation items structure constraint pass
+    # Exact hierarchical navigation layout definitions as requested by user
     with st.sidebar:
         nav_menu_options = [
             "Executive Overview", 
@@ -340,7 +342,7 @@ def main():
         ]
         selected_page = st.radio("Access Console Target Area", options=nav_menu_options, label_visibility="collapsed")
 
-        st.markdown('<div class="sb-section-title">⏱ Timeline Focus</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sb-section-title">⏱ Timeline Range Focus</div>', unsafe_allow_html=True)
         selected_period = st.selectbox("Active Period Window", options=timeline_periods, index=len(timeline_periods)-1)
         
         idx = timeline_periods.index(selected_period)
@@ -355,8 +357,8 @@ def main():
         kpi_dict_payload[m.lower().strip()] = m_subset.set_index("Period")["Value"].to_dict()
 
     stable_payload_hash = _stable_kpi_hash(kpi_dict_payload)
-    derivatives = compute_portal_derivatives(
-        stable_payload_hash, kpi_dict_payload, tuple(timeline_periods), selected_period, compute_hse_score_dynamic
+    derivatives = compute_kpi_derivatives(
+        stable_payload_hash, kpi_dict_payload, compute_hse_score_dynamic, tuple(timeline_periods), selected_period
     )
 
     current_date_str = datetime.now().strftime("%A, %d %B %Y")
@@ -385,7 +387,7 @@ def main():
         st.markdown('<div class="section-label">Enterprise Executive Summary & Compliance Anomalies</div>', unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary);"><div class="kpi-top-row"><div class="kpi-icon-badge">🎯</div><div class="kpi-trend-pill flat">HSE Score</div></div><div class="kpi-value">{derivatives['hse_score']} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">/ 100</span></div><div class="kpi-label">Dynamic Operational safety Index Score</div><div class="kpi-compare">Active Evaluation Period: <b>{selected_period}</b></div></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary);"><div class="kpi-top-row"><div class="kpi-icon-badge">🎯</div><div class="kpi-trend-pill flat">HSE Score</div></div><div class="kpi-value">{derivatives['hse_score']} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">/ 100</span></div><div class="kpi-label">Dynamic Operational Safety Index Score</div><div class="kpi-compare">Active Evaluation Period: <b>{selected_period}</b></div></div>""", unsafe_allow_html=True)
         with c2:
             prod_val_series = df_long[(df_long["Page"] == "Production") & (df_long["Period"] == selected_period)]["Value"].dropna()
             total_prod_sum = prod_val_series.sum() if not prod_val_series.empty else 0.0
