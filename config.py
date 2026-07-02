@@ -1,7 +1,7 @@
 # config.py
 """
 Centralized Enterprise Configuration System for Jubilant FoodWorks Limited.
-Serves as the single source of truth across all operational and analytical subsystems.
+Serves as the absolute single source of truth for the metadata-driven analytics portal.
 """
 import os
 
@@ -11,7 +11,7 @@ import os
 COMPANY_NAME = "Jubilant FoodWorks Limited"
 COMPANY_INITIALS = "JFL"
 DASHBOARD_TITLE = "Enterprise Analytics Portal"
-DASHBOARD_TITLE_SUB = "Executive Sustainability, EHS & Industrial Analytics"
+DASHBOARD_TITLE_SUB = "Executive Sustainability, EHS & Industrial Analytics Portal"
 CURRENT_FISCAL_YEAR = "2026"
 SIDEBAR_LOGO_TEXT = "JFL-BI"
 
