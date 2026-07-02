@@ -1,14 +1,14 @@
+# transformers/unpivot.py
 """
-Metadata-Driven Sheet Hierarchy & Core Unit Engineering Parsing Engine.
-Strictly extracts categories from Column B, subcategories from Column C, 
-metrics from Column D, and units from Row 3 with structural forward-filling.
+Metadata-Driven Structural Workbook Ingestion Pipeline Subsystem.
+Strictly extracts hierarchies from Columns B, C, and D, and units from Row 3.
+Zero hardcoded keyword or metric matching.
 """
 import re
 from io import BytesIO
 import numpy as np
 import pandas as pd
 import openpyxl
-import streamlit as st
 import config
 
 def _clean_string(val) -> str:
@@ -26,11 +26,10 @@ def _parse_numeric(val) -> float:
     except (ValueError, TypeError):
         return np.nan
 
-@st.cache_data(ttl=config.RAW_FILE_CACHE_TTL_SECONDS, show_spinner=False)
 def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
     """
     Parses workbook worksheets via openpyxl by doing strict geometric cell coordinate lookups.
-    Enforces a data-driven structure without hardcoding any keyword comparisons.
+    Enforces a metadata-driven structure without hardcoding any keyword comparisons.
     
     Structure extracted per metric row:
       - Category: Column B (Forward-filled)
@@ -39,6 +38,10 @@ def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
       - Unit: Row 3 (Mapped per data column index)
       - Month columns: Inferred dynamically from Row 2 or Row 3 date strings.
     """
+    if isinstance(file_bytes, dict):
+        # If a dictionary of dataframes is passed instead of raw bytes, gracefully handle it
+        raise TypeError("infer_and_melt_workbook_metadata expects raw file bytes to process row-level openpyxl geometry structures.")
+
     wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
     all_records = []
     units_registry = {}
@@ -47,33 +50,30 @@ def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
     date_regex = re.compile(r"(\b\d{4}-\d{2}-\d{2}\b|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|Jan|Feb|Mar)", re.IGNORECASE)
 
     for sheet_name in wb.sheetnames:
-        if sheet_name not in config.REQUIRED_SHEETS:
-            continue
-            
         ws = wb[sheet_name]
         max_row = ws.max_row
-        max_col = ws.max_column
+        max_column = ws.max_column
         
-        if max_row < 4 or max_col < 5:
+        if max_row < 4 or max_column < 5:
             continue
 
-        # Extract rows 1, 2, and 3 cleanly to read operational timelines
-        row2 = [ws.cell(row=2, column=c).value for c in range(1, max_col + 1)]
-        row3 = [ws.cell(row=3, column=c).value for c in range(1, max_col + 1)]
+        # Extract headers from rows 2 and 3
+        row2 = [ws.cell(row=2, column=c).value for c in range(1, max_column + 1)]
+        row3 = [ws.cell(row=3, column=c).value for c in range(1, max_column + 1)]
 
-        # Forward fill empty header regions caused by openpyxl merged cells evaluations
+        # Forward-fill headers across merged ranges to ensure consistent indexing
         for c in range(1, len(row2)):
             if row2[c] is None: row2[c] = row2[c-1]
         for c in range(1, len(row3)):
             if row3[c] is None: row3[c] = row3[c-1]
 
-        # Isolate temporal column map indices dynamically
+        # Map monthly reporting windows and target metrics columns dynamically
         timeline_mapping = {}
         target_col_idx = None
         ytd_col_idx = None
         mtd_col_idx = None
 
-        for c in range(5, max_col + 1):
+        for c in range(5, max_column + 1):
             val_r2 = _clean_string(row2[c-1])
             val_r3 = _clean_string(row3[c-1])
             
@@ -92,7 +92,7 @@ def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
         if not timeline_mapping:
             continue
 
-        # Positional state variables for structural forward-filling logic execution
+        # Positional tracking for structural forward-fill logic execution
         current_category = ""
         current_subcategory = ""
 
@@ -101,13 +101,13 @@ def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
             cell_c = ws.cell(row=r, column=3).value
             cell_d = ws.cell(row=r, column=4).value
 
-            # Forward-fill structure metrics hierarchies
+            # Forward-fill category and subcategory hierarchies natively
             if cell_b is not None and _clean_string(cell_b) != "": 
                 current_category = str(cell_b).strip()
             if cell_c is not None and _clean_string(cell_c) != "": 
                 current_subcategory = str(cell_c).strip()
                 
-            if cell_d is None or _clean_string(cell_d).lower() in ["nan", "none", "", "monthly kpi"]:
+            if cell_d is None or _clean_string(cell_d).lower() in ["nan", "none", ""]:
                 continue
                 
             metric_name = str(cell_d).strip()
@@ -128,12 +128,12 @@ def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
 
             units_registry[metric_name] = inferred_unit
 
-            # Pull non-timeline milestone segments safely
+            # Pull non-timeline structural summary indicators
             target_val = _parse_numeric(ws.cell(row=r, column=target_col_idx).value) if target_col_idx else np.nan
             ytd_val = _parse_numeric(ws.cell(row=r, column=ytd_col_idx).value) if ytd_col_idx else np.nan
             mtd_val = _parse_numeric(ws.cell(row=r, column=mtd_col_idx).value) if mtd_col_idx else np.nan
 
-            # Unpivot and normalize each time coordinates segment line entry
+            # Unpivot monthly value coordinates into normalized relational rows
             for col_idx, period_label in timeline_mapping.items():
                 numeric_val = _parse_numeric(ws.cell(row=r, column=col_idx).value)
                 
@@ -152,12 +152,12 @@ def infer_and_melt_workbook_metadata(file_bytes: bytes) -> dict:
 
                 all_records.append({
                     "Sheet": str(sheet_name).strip(),
-                    "Category": current_category if current_category else "General Data",
-                    "Subcategory": current_subcategory if current_subcategory else "Operations",
+                    "Category": current_category if current_category else str(sheet_name).strip(),
+                    "Subcategory": current_subcategory if current_subcategory else "General Operations",
                     "Metric": metric_name,
-                    "Unit": inferred_unit,
                     "Month": period_clean,
                     "Value": numeric_val,
+                    "Unit": inferred_unit,
                     "Target": target_val,
                     "YTD": ytd_val,
                     "MTD": mtd_val,
