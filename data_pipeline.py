@@ -1,7 +1,6 @@
 # data_pipeline.py
 """
-Hardened Data Ingestion & Metadata Framework Pipeline Subsystem.
-Handles zero-hardcoded auto-discovery of workbook taxonomies.
+Data Pipeline Hardening Subsystem — Ingestion Framework with Safe Snapshots.
 """
 import os
 import re
@@ -59,22 +58,22 @@ def fetch_workbook_hardened(url: str, cache_key: str, _fetch_fn):
     try:
         content = _fetch_fn(url, cache_key)
         _save_fallback_snapshot(content, url)
-        logger.info(f"Workbook successfully streaming live from production endpoint: {url}")
+        logger.info(f"Workbook fetched successfully from remote data stream: {url}")
         return content, {
             "source": "live", "fetched_at": datetime.now().strftime("%d %b %Y, %H:%M:%S"),
             "source_url": url, "warning": None,
         }
     except Exception as e:
-        logger.error(f"Live pipeline connection drop for endpoint {url}: {e}")
+        logger.error(f"Live pipeline connection drop for {url}: {e}")
         fallback = _load_fallback_snapshot()
         if fallback is not None:
             content, meta = fallback
             meta = dict(meta)
-            meta["warning"] = f"Live source unreachable ({e}). Displaying localized storage backup cache."
+            meta["warning"] = f"Live feed offline ({e}); showing baseline backup file generated at {meta.get('fetched_at')}."
             meta["source"] = "fallback"
             logger.warning(meta["warning"])
             return content, meta
-        logger.error("No valid local storage snapshot fallback assets located on system cluster storage.")
+        logger.error("No fallback operational snapshot database found on disk storage systems.")
         raise
 
 def validate_schema(file_bytes: bytes) -> list:
@@ -82,11 +81,28 @@ def validate_schema(file_bytes: bytes) -> list:
     try:
         wb = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
     except Exception as e:
-        return [f"Could not open streaming data file buffer: {e}"]
+        return [f"Could not verify file schema structural mappings: {e}"]
+
     sheet_names = wb.sheetnames
     for required in config.REQUIRED_SHEETS:
         if required not in sheet_names:
-            issues.append(f"Required base database table layer sheet missing from current workbook: '{required}'")
+            issues.append(f"Required data layer workspace layout missing: '{required}'")
+
+    label_col_map = {"H&S": 3, "Environment": 4}
+    for sheet_name, required_labels in config.REQUIRED_KPI_LABELS.items():
+        if sheet_name not in sheet_names:
+            continue
+        ws = wb[sheet_name]
+        col_idx = label_col_map.get(sheet_name, 3)
+        found_labels = set()
+        for row in ws.iter_rows(min_col=col_idx, max_col=col_idx, values_only=True):
+            val = row[0] if row else None
+            if isinstance(val, str):
+                found_labels.add(re.sub(r"\s+", " ", val).strip().lower())
+        for label in required_labels:
+            norm = re.sub(r"\s+", " ", label).strip().lower()
+            if norm not in found_labels:
+                issues.append(f"[{sheet_name}] Mandatory row schema target missing: '{label}'")
     wb.close()
     return issues
 
@@ -109,5 +125,5 @@ def resolve_latest_file_url(fallback_url: str) -> str:
         chosen = candidates[-1]
         return chosen.get("download_url") or fallback_url
     except Exception as e:
-        logger.error(f"Auto-detect workflow failed, reverting to default override target: {e}")
+        logger.error(f"Auto-detect of folder file layouts fell back onto defaults: {e}")
         return fallback_url
