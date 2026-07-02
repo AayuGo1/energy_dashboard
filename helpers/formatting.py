@@ -1,6 +1,6 @@
-# helpers/formatting.py
 """
 UI Design System Tokens & Plotly Layout Customization Helpers.
+Enforces the premium enterprise look inspired by Microsoft Fabric and Stripe.
 """
 import pandas as pd
 
@@ -38,17 +38,14 @@ def fmt_number(value) -> str:
     if abs(v) >= 1_000: return f"{v:,.1f}"
     return f"{v:,.2f}" if v != int(v) else f"{int(v):,}"
 
-def safe_icon_for(col_name: str) -> str:
-    name = col_name.lower()
-    if any(k in name for k in ["fatal", "injur", "accident", "safety", "incident"]): return "🦺"
-    if any(k in name for k in ["energy", "power", "kwh", "diesel", "lpg", "electricity"]): return "⚡"
-    if "water" in name: return "💧"
-    if "waste" in name: return "♻️"
-    if any(k in name for k in ["production", "volume", "output"]): return "🏭"
-    return "📊"
-
 def safe_icon_for_dynamic(metric_name: str) -> str:
-    return safe_icon_for(metric_name)
+    n = metric_name.lower()
+    if any(k in n for k in ["fatal", "injur", "accident", "safety", "incident"]): return "🦺"
+    if any(k in n for k in ["energy", "power", "kwh", "diesel", "lpg", "electricity", "fuel"]): return "⚡"
+    if "water" in n: return "💧"
+    if "waste" in n: return "♻️"
+    if any(k in n for k in ["production", "volume", "output"]): return "🏭"
+    return "📊"
 
 def apply_enterprise_layout(fig, height=340, title=None, legend=True):
     fig.update_layout(
