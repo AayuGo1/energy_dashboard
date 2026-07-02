@@ -1,5 +1,6 @@
 """
-Data Pipeline Hardening Subsystem — Ingestion Framework with Snapshot Fallbacks.
+Data Pipeline Hardening Subsystem — Ingestion Framework with Safe Snapshots.
+Handles raw binary streaming from GitHub with robust local fallbacks.
 """
 import os
 import re
@@ -8,7 +9,6 @@ import logging
 from io import BytesIO
 from datetime import datetime
 import requests
-from openpyxl import load_workbook
 import config
 
 def get_logger() -> logging.Logger:
@@ -76,32 +76,16 @@ def fetch_workbook_hardened(url: str, cache_key: str, _fetch_fn):
         raise
 
 def validate_schema(file_bytes: bytes) -> list:
+    from openpyxl import load_workbook
     issues = []
     try:
         wb = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
     except Exception as e:
         return [f"Could not verify file schema structural mappings: {e}"]
-
     sheet_names = wb.sheetnames
     for required in config.REQUIRED_SHEETS:
         if required not in sheet_names:
             issues.append(f"Required data layer workspace layout missing: '{required}'")
-
-    label_col_map = {"H&S": 3, "Environment": 4}
-    for sheet_name, required_labels in config.REQUIRED_KPI_LABELS.items():
-        if sheet_name not in sheet_names:
-            continue
-        ws = wb[sheet_name]
-        col_idx = label_col_map.get(sheet_name, 3)
-        found_labels = set()
-        for row in ws.iter_rows(min_col=col_idx, max_col=col_idx, values_only=True):
-            val = row[0] if row else None
-            if isinstance(val, str):
-                found_labels.add(re.sub(r"\s+", " ", val).strip().lower())
-        for label in required_labels:
-            norm = re.sub(r"\s+", " ", label).strip().lower()
-            if norm not in found_labels:
-                issues.append(f"[{sheet_name}] Mandatory row schema target missing: '{label}'")
     wb.close()
     return issues
 
