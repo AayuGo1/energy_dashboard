@@ -1,6 +1,7 @@
+# app.py
 """
 Jubilant FoodWorks Limited — Modern Enterprise Analytics Portal.
-100% Data-driven architecture driven entirely by metadata structure definitions.
+100% Data-driven architecture driven entirely by metadata structure definitions and rows.
 """
 import re
 import time
@@ -36,7 +37,9 @@ from transformers.unpivot import infer_and_melt_workbook_metadata
 
 logger = get_logger()
 CACHE_TTL_SECONDS = config.RAW_FILE_CACHE_TTL_SECONDS
+PLOTLY_BG = "rgba(0,0,0,0)"
 
+# Consolidated wide canvas layout overrides initialization
 st.set_page_config(
     page_title=f"{config.COMPANY_NAME} | Enterprise Analytics Portal",
     page_icon="📊", layout="wide", initial_sidebar_state="expanded"
@@ -60,7 +63,7 @@ def compute_hse_score_dynamic(kpi_dict: dict, periods_list: list, target_period:
         final_score = max(0.0, min(100.0, base_score * (0.6 + (0.4 * closure_rate))))
         return round(final_score, 1)
     except Exception as e:
-        logger.error(f"Safety matrix score calculation error intercept: {e}")
+        logger.error(f"Dynamic safety evaluation calculation exception: {e}")
         return 100.0
 
 def get_remote_cache_key(url: str) -> str:
@@ -230,6 +233,63 @@ def render_kpi_card_layout(metric_name, value, prev_value, unit):
     </div>
     """, unsafe_allow_html=True)
 
+def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics: list, selected_month: str, previous_month: str, units_registry: dict):
+    from charts.env_visuals import (
+        render_waste_efficiency_hybrid_chart,
+        render_waste_stream_stacked_chart,
+        render_water_discharge_spline,
+        render_dynamic_hybrid_overlay,
+        render_single_trajectory_area,
+    )
+    st.markdown(f'<div class="section-label">{page_key} Management Framework Hub</div>', unsafe_allow_html=True)
+    
+    df_page_long = df_long[df_long["Category"] == page_key]
+    df_month = df_page_long[df_page_long["Month"] == selected_month]
+    
+    # Subsections dynamic discovery split pass
+    distinct_subcategories = df_page_long["Subcategory"].unique().tolist()
+    
+    for sub_cat in distinct_subcategories:
+        st.markdown(f'<div class="section-label">{sub_cat} Parameters Section</div>', unsafe_allow_html=True)
+        df_sub = df_page_long[df_page_long["Subcategory"] == sub_cat]
+        sub_metrics = df_sub["Metric"].unique().tolist()
+        
+        sub_cols = st.columns(min(len(sub_metrics), 4))
+        for i, metric in enumerate(sub_metrics[:4]):
+            m_subset = df_sub[df_sub["Metric"] == metric]
+            c_val = m_subset[m_subset["Month"] == selected_month]["Value"].iloc[0] if not m_subset[m_subset["Month"] == selected_month].empty else None
+            p_val = m_subset[m_subset["Month"] == previous_month]["Value"].iloc[0] if previous_month and not m_subset[m_subset["Month"] == previous_month].empty else None
+            with sub_cols[i % 4]:
+                render_kpi_card_layout(metric, c_val, p_val, units_registry.get(metric, ""))
+
+    st.markdown('<div class="section-label">Automatic Trend Projections Matrix</div>', unsafe_allow_html=True)
+    if page_key == "Waste":
+        c_left, c_right = st.columns(2)
+        with c_left:
+            st.markdown('<div class="exec-card">', unsafe_allow_html=True)
+            render_waste_efficiency_hybrid_chart(df_page_long, units_registry)
+            st.markdown('</div>', unsafe_allow_html=True)
+        with c_right:
+            st.markdown('<div class="exec-card">', unsafe_allow_html=True)
+            render_waste_stream_stacked_chart(df_page_long, units_registry)
+            st.markdown('</div>', unsafe_allow_html=True)
+    elif page_key == "Water":
+        st.markdown('<div class="exec-card">', unsafe_allow_html=True)
+        render_water_discharge_spline(df_page_long, units_registry)
+        st.markdown('</div>', unsafe_allow_html=True)
+    elif page_key == "Energy":
+        st.markdown('<div class="exec-card">', unsafe_allow_html=True)
+        render_dynamic_hybrid_overlay(df_page_long, "⚡ Production Scale vs Direct Energy Consumption Footprint Profile", "Production Volume", "energy consumption", units_registry)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="section-label">Raw Data Table Explorer Pass</div>', unsafe_allow_html=True)
+    df_table_out = df_month[["Subcategory", "Metric", "Value", "Unit"]].reset_index(drop=True)
+    with st.expander("📄 Query Segment Database Records Grid", expanded=False):
+        st.dataframe(df_table_out, use_container_width=True, height=280)
+        csv_buffer = df_table_out.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Export Current Segment Frame to CSV Format", data=csv_buffer, file_name=f"{page_key}_segment_normalized_export.csv", mime="text/csv")
+
+
 def main():
     inject_portal_design_language()
     status_placeholder = render_sidebar()
@@ -238,7 +298,7 @@ def main():
     fetch_meta = {"source": "live", "fetched_at": "—", "source_url": config.GITHUB_RAW_URL_OVERRIDE, "warning": None}
     schema_warnings = []
 
-    with st.spinner("⏳ Processing analytical data infrastructure..."):
+    with st.spinner("⏳ Processing master analytical pipeline..."):
         try:
             target_endpoint = resolve_latest_file_url(config.GITHUB_RAW_URL_OVERRIDE)
             cache_sig = get_remote_cache_key(target_endpoint)
@@ -259,7 +319,6 @@ def main():
         st.error(f"⚠️ Critical Ingestion Failure: {load_error}")
         st.stop()
 
-    # STEP 4: Build normalized dataframe using metadata-driven openpyxl parser engine
     meta_bundle = infer_and_melt_workbook_metadata(raw_bytes)
     df_long = meta_bundle["long_df"]
     catalog = meta_bundle["catalog"]
@@ -267,14 +326,12 @@ def main():
     units_registry = meta_bundle["units"]
 
     if df_long.empty:
-        st.error("⚠️ Zero records extracted from data layouts.")
+        st.error("⚠️ Zero entries parsed from current data layout.")
         st.stop()
 
-    # STEP 6: Step 6 Debug verification view block pass
     st.markdown('<div class="section-label">⚙️ Pipeline Debug Layer (Step 6 Verification Table Matrix)</div>', unsafe_allow_html=True)
     st.dataframe(df_long, use_container_width=True, height=200)
 
-    # STEP 7: Strict Navigation Category Tree Controls Slicing
     with st.sidebar:
         nav_menu_options = [
             "Executive Overview", 
@@ -283,32 +340,34 @@ def main():
             "Waste"
         ]
         selected_page = st.radio("Access Console Target Area", options=nav_menu_options, label_visibility="collapsed")
-        st.markdown('<div class="sb-section-title">⏱ Period Selection</div>', unsafe_allow_html=True)
-        selected_period = st.selectbox("Active Period Window", options=timeline_periods, index=len(timeline_periods)-1)
+        st.markdown('<div class="sb-section-title">⏱ Month Selection</div>', unsafe_allow_html=True)
+        selected_month = st.selectbox("Active Period Window", options=timeline_periods, index=len(timeline_periods)-1)
         
-        idx = timeline_periods.index(selected_period)
-        previous_period = timeline_periods[idx - 1] if idx > 0 else None
+        idx = timeline_periods.index(selected_month)
+        previous_month = timeline_periods[idx - 1] if idx > 0 else None
 
-    # STEP 7: Category alignment slicing rule logic
     if selected_page != "Executive Overview":
         df_page_filtered = df_long[df_long["Category"] == selected_page]
     else:
         df_page_filtered = df_long.copy()
 
-    df_period_mask = df_page_filtered[df_page_filtered["Period"] == selected_period]
+    df_period_mask = df_page_filtered[df_page_filtered["Month"] == selected_month]
     unique_metrics = df_page_filtered["Metric"].unique().tolist()
     
     kpi_dict_payload = {}
     for m in df_long["Metric"].unique().tolist():
         m_subset = df_long[df_long["Metric"] == m]
-        kpi_dict_payload[m.lower().strip()] = m_subset.set_index("Period")["Value"].to_dict()
+        kpi_dict_payload[m.lower().strip()] = m_subset.set_index("Month")["Value"].to_dict()
 
     stable_payload_hash = _stable_kpi_hash(kpi_dict_payload)
     derivatives = compute_portal_derivatives(
-        stable_payload_hash, kpi_dict_payload, tuple(timeline_periods), selected_period, compute_hse_score_dynamic
+        stable_payload_hash, kpi_dict_payload, tuple(timeline_periods), selected_month, compute_hse_score_dynamic
     )
 
     current_date_str = datetime.now().strftime("%A, %d %B %Y")
+    status_marker = "Synchronized" if fetch_meta.get("source") == "live" else "Snapshot Active"
+    status_color = "var(--success)" if fetch_meta.get("source") == "live" else "var(--warning)"
+    
     st.markdown(f"""
         <div class="app-header">
             <div class="app-header-left">
@@ -321,7 +380,7 @@ def main():
             <div class="header-badge-row">
                 <div class="header-badge">📅 {current_date_str}</div>
                 <div class="header-badge">FY Target Scope: {config.CURRENT_FISCAL_YEAR}</div>
-                <div class="header-badge live">🎚 Active Target: {selected_period}</div>
+                <div class="header-badge live">🎚 Active Target: {selected_month}</div>
             </div>
         </div>
     """, unsafe_allow_html=True)
@@ -330,93 +389,50 @@ def main():
         st.markdown('<div class="section-label">Enterprise High-Level Executive Status Summary & Compliance Alerts</div>', unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary);"><div class="kpi-top-row"><div class="kpi-icon-badge">🎯</div><div class="kpi-trend-pill flat">HSE Index</div></div><div class="kpi-value">{derivatives['hse_score']} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">/ 100</span></div><div class="kpi-label">Dynamic Safety Rating Score Index</div><div class="kpi-compare">Timeline Period Focus: <b>{selected_period}</b></div></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary);"><div class="kpi-top-row"><div class="kpi-icon-badge">🎯</div><div class="kpi-trend-pill flat">HSE Index</div></div><div class="kpi-value">{derivatives['hse_score']} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">/ 100</span></div><div class="kpi-label">Dynamic Safety Rating Score Index</div><div class="kpi-compare">Timeline Period Focus: <b>{selected_month}</b></div></div>""", unsafe_allow_html=True)
         with c2:
-            prod_val_series = df_long[(df_long["Page"] == "Production") & (df_long["Period"] == selected_period)]["Value"].dropna()
-            total_prod_sum = prod_val_series.sum() if not prod_val_series.empty else 0.0
-            prod_unit = units_registry.get(df_long[df_long["Page"] == "Production"]["Metric"].iloc[0], "t") if not df_long[df_long["Page"] == "Production"].empty else "t"
-            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary-2);"><div class="kpi-top-row"><div class="kpi-icon-badge">🏭</div><div class="kpi-trend-pill flat">Output Volume</div></div><div class="kpi-value">{fmt_number(total_prod_sum)} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">{prod_unit}</span></div><div class="kpi-label">Aggregated Production Volume Output Summation</div><div class="kpi-compare">Current focus window consolidated total</div></div>""", unsafe_allow_html=True)
+            prod_df = df_long[df_long["Metric"].str.contains("Production Volume", case=False, na=False)]
+            if not prod_df.empty:
+                prod_row = prod_df[prod_df["Month"] == selected_month]
+                total_prod_sum = prod_row["Value"].iloc[0] if not prod_row.empty else 0.0
+                prod_unit = units_registry.get(prod_df["Metric"].iloc[0], "t")
+            else:
+                total_prod_sum = 0.0
+                prod_unit = "t"
+            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary-2);"><div class="kpi-top-row"><div class="kpi-icon-badge">🏭</div><div class="kpi-trend-pill flat">Production Output</div></div><div class="kpi-value">{fmt_number(total_prod_sum)} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">{prod_unit}</span></div><div class="kpi-label">Aggregated Industrial Production Volume Summation</div><div class="kpi-compare">Consolidated current month output pass</div></div>""", unsafe_allow_html=True)
         with c3:
             total_alerts_count = len(derivatives.get("anomalies", []))
             pill_col = "var(--success)" if total_alerts_count == 0 else "var(--warning)"
             st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid {pill_col};"><div class="kpi-top-row"><div class="kpi-icon-badge">🔔</div><div class="kpi-trend-pill flat">Alert Matrix</div></div><div class="kpi-value" style="color:{pill_col};">{total_alerts_count} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">Active Flags</span></div><div class="kpi-label">Exception Anomaly Variance Notifications</div><div class="kpi-compare">Scaled relative to boundary deviations</div></div>""", unsafe_allow_html=True)
 
-        render_risk_panel_dynamic(kpi_dict_payload, selected_period, timeline_periods, derivatives, units_registry)
+        render_risk_panel_dynamic(kpi_dict_payload, selected_month, timeline_periods, derivatives, units_registry)
         
         st.markdown('<div class="section-label">Unified Structural Domain Section Synopses</div>', unsafe_allow_html=True)
+        df_global_month_mask = df_long[df_long["Month"] == selected_month]
         cc1, cc2, cc3 = st.columns(3)
         with cc1:
             st.markdown('<div class="exec-card"><h6>⚡ Inferred Energy Section Status</h6>', unsafe_allow_html=True)
-            for _, r in df_long[(df_long["Category"] == "Energy") & (df_long["Period"] == selected_period)].head(4).iterrows():
+            for _, r in df_global_month_mask[df_global_month_mask["Category"] == "Energy"].head(4).iterrows():
                 st.markdown(f'<div class="stat-mini"><span class="stat-label">{r["Metric"][:35]}</span><span class="stat-value">{fmt_number(r["Value"])} {r["Unit"]}</span></div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
         with cc2:
             st.markdown('<div class="exec-card"><h6>💧 Inferred Water Section Status</h6>', unsafe_allow_html=True)
-            for _, r in df_long[(df_long["Category"] == "Water") & (df_long["Period"] == selected_period)].head(4).iterrows():
+            for _, r in df_global_month_mask[df_global_month_mask["Category"] == "Water"].head(4).iterrows():
                 st.markdown(f'<div class="stat-mini"><span class="stat-label">{r["Metric"][:35]}</span><span class="stat-value">{fmt_number(r["Value"])} {r["Unit"]}</span></div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
         with cc3:
             st.markdown('<div class="exec-card"><h6>♻️ Inferred Waste Section Status</h6>', unsafe_allow_html=True)
-            for _, r in df_long[(df_long["Category"] == "Waste") & (df_long["Period"] == selected_period)].head(4).iterrows():
+            for _, r in df_global_month_mask[df_global_month_mask["Category"] == "Waste"].head(4).iterrows():
                 st.markdown(f'<div class="stat-mini"><span class="stat-label">{r["Metric"][:35]}</span><span class="stat-value">{fmt_number(r["Value"])} {r["Unit"]}</span></div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
             
-        render_audit_log_portal(fetch_meta, selected_period)
+        render_audit_log_portal(fetch_meta, selected_month)
 
     else:
-        # STEP 8 & 9: Generate metadata-driven pages with engineering units matching Row 3 explicitly
-        st.markdown(f'<div class="section-label">{selected_page} Management Framework Hub</div>', unsafe_allow_html=True)
-        
-        # Subsections dynamic discovery split pass
-        distinct_subcategories = df_page_filtered["Subcategory"].unique().tolist()
-        
-        for sub_cat in distinct_subcategories:
-            st.markdown(f'<div class="section-label">{sub_cat} Parameters Section</div>', unsafe_allow_html=True)
-            df_sub = df_page_filtered[df_page_filtered["Subcategory"] == sub_cat]
-            sub_metrics = df_sub["Metric"].unique().tolist()
-            
-            sub_cols = st.columns(min(len(sub_metrics), 4))
-            for i, metric in enumerate(sub_metrics[:4]):
-                m_subset = df_sub[df_sub["Metric"] == metric]
-                c_val = m_subset[m_subset["Period"] == selected_period]["Value"].iloc[0] if not m_subset[m_subset["Period"] == selected_period].empty else None
-                p_val = m_subset[m_subset["Period"] == previous_period]["Value"].iloc[0] if previous_period and not m_subset[m_subset["Period"] == previous_period].empty else None
-                with sub_cols[i % 4]:
-                    render_kpi_card_layout(metric, c_val, p_val, units_registry.get(metric, ""))
-
-        # STEP 8 & 9: Dynamic, data-driven charts rendering based on filtered records dataframe
-        from charts.env_visuals import (
-            render_waste_efficiency_hybrid_chart,
-            render_waste_stream_stacked_chart,
-            render_water_discharge_spline,
-            render_dynamic_hybrid_overlay,
-            render_single_trajectory_area,
-        )
-        st.markdown('<div class="section-label">Automatic Trend Projections Axis Matrix</div>', unsafe_allow_html=True)
-        if selected_page == "Waste":
-            c_left, c_right = st.columns(2)
-            with c_left:
-                st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-                render_waste_efficiency_hybrid_chart(df_long, units_registry)
-                st.markdown('</div>', unsafe_allow_html=True)
-            with c_right:
-                st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-                render_waste_stream_stacked_chart(df_long, units_registry)
-                st.markdown('</div>', unsafe_allow_html=True)
-        elif selected_page == "Water":
-            st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-            render_water_discharge_spline(df_long, units_registry)
-            st.markdown('</div>', unsafe_allow_html=True)
-        elif selected_page == "Energy":
-            st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-            render_dynamic_hybrid_overlay(df_long, "⚡ Production Scale vs Direct Energy Consumption Footprint Profile", "Production Volume", "energy consumption", units_registry)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown('<div class="section-label">Raw Segment Data Table Explorer</div>', unsafe_allow_html=True)
-        df_table_out = df_period_mask[["Subcategory", "Metric", "Value", "Unit"]].reset_index(drop=True)
-        with st.expander("📄 Query Segment Database Records Grid", expanded=False):
-            st.dataframe(df_table_out, use_container_width=True, height=280)
-            csv_buffer = df_table_out.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Export Current Segment Frame to CSV Format", data=csv_buffer, file_name=f"{selected_page}_segment_normalized_export.csv", mime="text/csv")
+        if selected_page in catalog:
+            render_metadata_page_view(selected_page, df_long, catalog[selected_page], selected_month, previous_month, units_registry)
+        else:
+            st.info("No active operational context items mapped under this category module.")
 
 
 if __name__ == "__main__":
