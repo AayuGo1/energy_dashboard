@@ -1,6 +1,6 @@
 # kpi_engine.py
 """
-KPI Calculation Engine — Derived Analytics and Risk Panels.
+Derived Analytics Framework Caching & Structural Enterprise Risk Panels.
 """
 import json
 import hashlib
@@ -14,15 +14,23 @@ def _stable_kpi_hash(kpis: dict) -> str:
         payload = str(kpis)
     return hashlib.md5(payload.encode()).hexdigest()
 
-def get_kpi_status(key: str, value) -> str:
-    if value is None:
+def get_kpi_status_dynamic(metric_name: str, value) -> str:
+    if value is None or str(value).strip() == "" or value == "N/A":
         return "na"
-    cfg = config.KPI_THRESHOLDS.get(key.lower().strip())
+    
+    norm_key = metric_name.lower().strip()
+    cfg = None
+    
+    # Check matching parameters inside dynamic threshold configuration targets
+    for target_key, config_vals in config.KPI_THRESHOLDS.items():
+        if target_key in norm_key:
+            cfg = config_vals
+            break
+            
     if not cfg:
         return "na"
+        
     red, yellow, direction = cfg.get("red"), cfg.get("yellow"), cfg.get("direction")
-    if red is None and yellow is None:
-        return "na"
     try:
         v = float(value)
     except (TypeError, ValueError):
@@ -37,14 +45,16 @@ def get_kpi_status(key: str, value) -> str:
         if yellow is not None and v >= yellow: return "yellow"
         return "green"
 
-def detect_anomalies(kpis: dict, months_upto: list, selected_month: str) -> list:
-    if len(months_upto) < 2:
+def detect_anomalies_dynamic(kpi_dict: dict, periods: list, target_period: str) -> list:
+    if len(periods) < 2 or target_period not in periods:
         return []
-    prev_month = months_upto[-2]
+    idx = periods.index(target_period)
+    prev_period = periods[idx - 1]
+    
     anomalies = []
-    for key, series in kpis.items():
-        cur = series.get(selected_month)
-        prev = series.get(prev_month)
+    for metric_name, timeline_vals in kpi_dict.items():
+        cur = timeline_vals.get(target_period)
+        prev = timeline_vals.get(prev_period)
         if cur is None or prev is None:
             continue
         try:
@@ -56,7 +66,7 @@ def detect_anomalies(kpis: dict, months_upto: list, selected_month: str) -> list
         pct_change = ((cur - prev) / abs(prev)) * 100
         if abs(pct_change) >= config.ANOMALY_PCT_THRESHOLD:
             anomalies.append({
-                "key": key,
+                "metric": metric_name,
                 "pct_change": round(pct_change, 1),
                 "direction": "spike" if pct_change > 0 else "drop",
                 "current": cur,
@@ -65,75 +75,77 @@ def detect_anomalies(kpis: dict, months_upto: list, selected_month: str) -> list
     return sorted(anomalies, key=lambda a: abs(a["pct_change"]), reverse=True)
 
 @st.cache_data(ttl=config.KPI_CACHE_TTL_SECONDS, show_spinner=False)
-def compute_kpi_derivatives(kpi_hash: str, _kpis: dict, _hse_score_fn, months_upto: tuple, selected_month: str):
-    months_list = list(months_upto)
-    hse_score = _hse_score_fn(_kpis, months_list, selected_month)
-    anomalies = detect_anomalies(_kpis, months_list, selected_month)
+def compute_portal_derivatives(payload_hash: str, kpi_dict: dict, periods_tuple: tuple, target_period: str, _hse_score_fn):
+    periods_list = list(periods_tuple)
+    hse_score = _hse_score_fn(kpi_dict, periods_list, target_period)
+    anomalies = detect_anomalies_dynamic(kpi_dict, periods_list, target_period)
     return {"hse_score": hse_score, "anomalies": anomalies}
 
-def render_risk_panel(kpis: dict, selected_month: str, prev_month, months_upto: list, card_meta: dict, derivatives: dict):
-    st.markdown('<div class="section-label">Risk Dashboard · Exceptional Variances</div>', unsafe_allow_html=True)
-    statuses = {key: get_kpi_status(key, kpis.get(key.lower().strip(), {}).get(selected_month)) for key in card_meta}
-    red_items = [k for k, s in statuses.items() if s == "red"]
-    yellow_items = [k for k, s in statuses.items() if s == "yellow"]
+def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list, derivatives: dict):
+    st.markdown('<div class="section-label">Exception Anomalies & Live Risk Panel Indicators</div>', unsafe_allow_html=True)
+    
+    red_alerts = []
+    yellow_alerts = []
+    for metric_name, timeline in kpi_dict.items():
+        v = timeline.get(target_period)
+        status = get_kpi_status_dynamic(metric_name, v)
+        if status == "red":
+            red_alerts.append((metric_name, v))
+        elif status == "yellow":
+            yellow_alerts.append((metric_name, v))
+            
     anomalies = derivatives.get("anomalies", [])
 
-    if not red_items and not yellow_items and not anomalies:
+    if not red_alerts and not yellow_alerts and not anomalies:
         st.markdown(
-            '<div class="exec-card" style="border-left:4px solid var(--success);">'
-            '<div class="status-row" style="color:var(--success) !important; font-size:13px;">✓ Operations Clean & Compliant</div>'
-            '<div style="font-size:12px; color:var(--text-mid); margin-top:4px;">No active compliance alert parameters are breaking boundary thresholds.</div></div>',
+            '<div class="exec-card" style="border-left: 4px solid var(--success);">'
+            '<div class="status-row" style="color: var(--success) !important; font-size: 14px; font-weight: 600;">✓ Compliance Parameters Baseline Stable</div>'
+            '<div style="font-size: 12px; color: var(--text-mid); margin-top: 4px;">Zero operations breaches recorded cross-checking target boundaries.</div></div>',
             unsafe_allow_html=True
         )
         return
 
-    col_red, col_yellow, col_anomaly = st.columns(3)
-    with col_red:
+    c_red, c_yellow, c_anomaly = st.columns(3)
+    with c_red:
         st.markdown('<div class="exec-card" style="border-top: 3px solid var(--danger);">', unsafe_allow_html=True)
-        st.markdown('<div class="kpi-label" style="color:var(--danger); font-weight:700; margin-bottom:12px;">🚨 Critical Violations</div>', unsafe_allow_html=True)
-        if red_items:
-            for key in red_items:
-                label, formatter, unit = card_meta[key]
-                val = formatter(kpis.get(key.lower().strip(), {}).get(selected_month))
-                st.markdown(f'<div class="stat-mini"><span class="stat-label">{label}</span><span class="stat-value" style="color:var(--danger);">{val} {unit}</span></div>', unsafe_allow_html=True)
+        st.markdown('<div style="color: var(--danger); font-size: 13px; font-weight: 700; margin-bottom: 12px;">🚨 Critical Operational Breaches</div>', unsafe_allow_html=True)
+        if red_alerts:
+            for metric, val in red_alerts:
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric}</span><span class="stat-value" style="color: var(--danger);">{val:,.1f}</span></div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div style="font-size:12px; color:var(--text-lo);">Zero items in breach state</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown('<div style="font-size: 12px; color: var(--text-lo);">Zero critical items flagged</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    with col_yellow:
+    with c_yellow:
         st.markdown('<div class="exec-card" style="border-top: 3px solid var(--warning);">', unsafe_allow_html=True)
-        st.markdown('<div class="kpi-label" style="color:var(--warning); font-weight:700; margin-bottom:12px;">⚠️ Attention Required</div>', unsafe_allow_html=True)
-        if yellow_items:
-            for key in yellow_items:
-                label, formatter, unit = card_meta[key]
-                val = formatter(kpis.get(key.lower().strip(), {}).get(selected_month))
-                st.markdown(f'<div class="stat-mini"><span class="stat-label">{label}</span><span class="stat-value" style="color:var(--warning);">{val} {unit}</span></div>', unsafe_allow_html=True)
+        st.markdown('<div style="color: var(--warning); font-size: 13px; font-weight: 700; margin-bottom: 12px;">⚠️ Threshold Boundaries Watchlist</div>', unsafe_allow_html=True)
+        if yellow_alerts:
+            for metric, val in yellow_alerts:
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{metric}</span><span class="stat-value" style="color: var(--warning);">{val:,.1f}</span></div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div style="font-size:12px; color:var(--text-lo);">Zero tracking flags warning bounds</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown('<div style="font-size: 12px; color: var(--text-lo);">Zero boundary warnings triggered</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    with col_anomaly:
+    with c_anomaly:
         st.markdown('<div class="exec-card" style="border-top: 3px solid var(--primary);">', unsafe_allow_html=True)
-        st.markdown('<div class="kpi-label" style="color:var(--primary); font-weight:700; margin-bottom:12px;">📊 Structural Fluctuations</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="color: var(--primary); font-size: 13px; font-weight: 700; margin-bottom: 12px;">📊 Timeline Volume Deviations (MoM ≥ {config.ANOMALY_PCT_THRESHOLD:.0f}%)</div>', unsafe_allow_html=True)
         if anomalies:
             for a in anomalies[:5]:
-                raw_key = a["key"]
-                label = card_meta.get(raw_key, (raw_key, str, ""))[0]
                 arrow = "▲" if a["direction"] == "spike" else "▼"
-                color = "var(--danger)" if a["direction"] == "spike" and "waste" in raw_key else "var(--primary)"
-                st.markdown(f'<div class="stat-mini"><span class="stat-label">{label}</span><span class="stat-value" style="color:{color}; font-weight:700;">{arrow} {a["pct_change"]:+.1f}%</span></div>', unsafe_allow_html=True)
+                color = "var(--danger)" if a["direction"] == "spike" and "waste" in a["metric"].lower() else "var(--primary)"
+                st.markdown(f'<div class="stat-mini"><span class="stat-label">{a["metric"]}</span><span class="stat-value" style="color: {color};">{arrow} {a["pct_change"]:+.1f}%</span></div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div style="font-size:12px; color:var(--text-lo);">No extreme period swings detected</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown('<div style="font-size: 12px; color: var(--text-lo);">Zero extreme variations observed</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-def render_audit_log(fetch_meta: dict, selected_fy: str, selected_month: str):
-    st.markdown('<div class="section-label">Pipeline Operational Diagnostics Log</div>', unsafe_allow_html=True)
+def render_audit_log_portal(fetch_meta: dict, current_period: str):
+    st.markdown('<div class="section-label">Pipeline Operational Architecture Diagnostics & Telemetry</div>', unsafe_allow_html=True)
     st.markdown('<div class="exec-card">', unsafe_allow_html=True)
-    source_badge = "🟢 Live Production Feed" if fetch_meta.get("source") == "live" else "⚠️ Disconnected Snapshot Backup Layer"
-    st.markdown(f'<div class="stat-mini"><span class="stat-label">System Feed Profile</span><span class="stat-value">{source_badge}</span></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="stat-mini"><span class="stat-label">Refresh Execution Timestamp</span><span class="stat-value">{fetch_meta.get("fetched_at", "N/A")}</span></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="stat-mini"><span class="stat-label">Active Audit Boundary Target</span><span class="stat-value">FY {selected_fy} · Period: {selected_month}</span></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="stat-mini"><span class="stat-label">Endpoint String URI Mapping</span><span class="stat-value" style="font-family: monospace; font-size:11px;">{fetch_meta.get("source_url", "N/A")}</span></div>', unsafe_allow_html=True)
+    status_badge = "🟢 Synchronized Live Secure Repository" if fetch_meta.get("source") == "live" else "⚠️ Disconnected Snapshot Cache Safe Mode"
+    st.markdown(f'<div class="stat-mini"><span class="stat-label">System Feed Integrity Profile</span><span class="stat-value">{status_badge}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="stat-mini"><span class="stat-label">Ingestion Pulse Timestamp</span><span class="stat-value">{fetch_meta.get("fetched_at", "—")}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="stat-mini"><span class="stat-label">Active Database Matrix Target</span><span class="stat-value">Fiscal Year {config.CURRENT_FISCAL_YEAR} · Period Window: {current_period}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="stat-mini"><span class="stat-label">Data Source URI Access Path</span><span class="stat-value" style="font-family: monospace; font-size: 11px; color: var(--primary);">{fetch_meta.get("source_url", "—")}</span></div>', unsafe_allow_html=True)
     if fetch_meta.get("warning"):
-        st.markdown(f'<div class="stat-mini" style="border-left: 3px solid var(--warning); background-color: #FFFBEB;"><span class="stat-label" style="color: var(--warning);">Diagnostic Exception Notice</span><span class="stat-value" style="color: var(--warning); font-size:11.5px;">{fetch_meta["warning"]}</span></div>', unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-mini" style="border-left: 3px solid var(--warning); background-color: #FFFBEB;"><span class="stat-label" style="color: var(--warning);">Intercept Warning Note</span><span class="stat-value" style="color: var(--warning); font-size: 11.5px;">{fetch_meta["warning"]}</span></div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
