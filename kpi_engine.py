@@ -1,5 +1,5 @@
 """
-KPI Core Engine Subsystem — Performs mathematical aggregation, variance evaluation, and anomaly scans.
+KPI Core Engine Subsystem — Contains synchronized implementations for analytical tracking.
 """
 import json
 import hashlib
@@ -69,10 +69,15 @@ def detect_anomalies_dynamic(kpi_dict: dict, periods: list, target_period: str) 
     return sorted(anomalies, key=lambda a: abs(a["pct_change"]), reverse=True)
 
 @st.cache_data(ttl=config.KPI_CACHE_TTL_SECONDS, show_spinner=False)
-def compute_portal_derivatives(payload_hash: str, kpi_dict: dict, periods_tuple: tuple, target_period: str):
+def compute_portal_derivatives(payload_hash: str, kpi_dict: dict, periods_tuple: tuple, target_period: str, _hse_score_fn):
     periods_list = list(periods_tuple)
+    hse_score = _hse_score_fn(kpi_dict, periods_list, target_period)
     anomalies = detect_anomalies_dynamic(kpi_dict, periods_list, target_period)
-    return {"anomalies": anomalies}
+    return {"hse_score": hse_score, "anomalies": anomalies}
+
+def compute_kpi_derivatives(payload_hash: str, kpi_dict: dict, _hse_score_fn, periods_tuple: tuple, target_period: str):
+    """Alias for backwards compatibility synchronization with app layers."""
+    return compute_portal_derivatives(payload_hash, kpi_dict, periods_tuple, target_period, _hse_score_fn)
 
 def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list, derivatives: dict, units_registry: dict):
     st.markdown('<div class="section-label">Exception Anomalies & Live Risk Panel Indicators</div>', unsafe_allow_html=True)
@@ -132,14 +137,20 @@ def render_risk_panel_dynamic(kpi_dict: dict, target_period: str, periods: list,
             st.markdown('<div style="font-size: 12px; color: var(--text-lo);">Zero extreme variations observed</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-def render_audit_log_portal(fetch_meta: dict, current_period: str):
-    st.markdown('<div class="section-label">Pipeline Operational Diagnostics Log & Telemetry Audit Trail</div>', unsafe_allow_html=True)
+def render_risk_panel(kpi_dict: dict, selected_month: str, prev_month, months_upto: list, card_meta: dict, derivatives: dict):
+    render_risk_panel_dynamic(kpi_dict, selected_month, months_upto, derivatives, {})
+
+def render_audit_log(fetch_meta: dict, selected_fy: str, selected_month: str):
+    st.markdown('<div class="section-label">Pipeline Operational Diagnostics Log</div>', unsafe_allow_html=True)
     st.markdown('<div class="exec-card">', unsafe_allow_html=True)
     source_badge = "🟢 Live Production Feed" if fetch_meta.get("source") == "live" else "⚠️ Disconnected Snapshot Backup Layer"
     st.markdown(f'<div class="stat-mini"><span class="stat-label">System Feed Profile</span><span class="stat-value">{source_badge}</span></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="stat-mini"><span class="stat-label">Refresh Execution Timestamp</span><span class="stat-value">{fetch_meta.get("fetched_at", "N/A")}</span></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="stat-mini"><span class="stat-label">Active Audit Boundary Target</span><span class="stat-value">FY {config.CURRENT_FISCAL_YEAR} · Period: {current_period}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="stat-mini"><span class="stat-label">Active Audit Boundary Target</span><span class="stat-value">FY {selected_fy} · Period: {selected_month}</span></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="stat-mini"><span class="stat-label">Endpoint String URI Mapping</span><span class="stat-value" style="font-family: monospace; font-size:11px; color:var(--primary);">{fetch_meta.get("source_url", "N/A")}</span></div>', unsafe_allow_html=True)
     if fetch_meta.get("warning"):
         st.markdown(f'<div class="stat-mini" style="border-left: 3px solid var(--warning); background-color: #FFFBEB;"><span class="stat-label" style="color: var(--warning);">Diagnostic Exception Notice</span><span class="stat-value" style="color: var(--warning); font-size:11.5px;">{fetch_meta["warning"]}</span></div>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
+
+def render_audit_log_portal(fetch_meta: dict, current_period: str):
+    render_audit_log(fetch_meta, config.CURRENT_FISCAL_YEAR, current_period)
