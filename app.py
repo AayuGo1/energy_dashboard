@@ -1,7 +1,6 @@
-# app.py
 """
-Jubilant FoodWorks Limited — Modern Enterprise Analytics Portal.
-100% Data-driven architecture driven entirely by metadata structure definitions and rows.
+Jubilant FoodWorks Limited — Modern Enterprise Analytics Portal UI.
+Orchestrates fully restored components through data-driven metadata workbook topologies.
 """
 import re
 import time
@@ -19,13 +18,14 @@ from data_pipeline import (
     get_logger,
     fetch_workbook_hardened,
     validate_schema,
+    load_all_sheets_raw,
     resolve_latest_file_url,
 )
 from kpi_engine import (
     _stable_kpi_hash,
-    compute_portal_derivatives,
-    render_risk_panel_dynamic,
-    render_audit_log_portal,
+    compute_kpi_derivatives,
+    render_risk_panel,
+    render_audit_log,
 )
 from helpers.formatting import (
     PAL,
@@ -39,56 +39,10 @@ logger = get_logger()
 CACHE_TTL_SECONDS = config.RAW_FILE_CACHE_TTL_SECONDS
 PLOTLY_BG = "rgba(0,0,0,0)"
 
-# Consolidated wide canvas layout overrides initialization
-st.set_page_config(
-    page_title=f"{config.COMPANY_NAME} | Enterprise Analytics Portal",
-    page_icon="📊", layout="wide", initial_sidebar_state="expanded"
-)
-
-def compute_hse_score_dynamic(kpi_dict: dict, periods_list: list, target_period: str) -> float:
-    try:
-        total_incidents = 0.0
-        incident_keywords = ["fatalit", "injury", "accident", "near miss"]
-        for key, timeline in kpi_dict.items():
-            if any(k in key for k in incident_keywords):
-                val = timeline.get(target_period, 0)
-                total_incidents += float(val) if val and not pd.isna(val) else 0.0
-        closure_rate = 1.0
-        for key, timeline in kpi_dict.items():
-            if "closure" in key or "uauc" in key:
-                rate = timeline.get(target_period, 1.0)
-                closure_rate = float(rate) if rate and not pd.isna(rate) else 1.0
-                break
-        base_score = 100.0 - (total_incidents * 4.5)
-        final_score = max(0.0, min(100.0, base_score * (0.6 + (0.4 * closure_rate))))
-        return round(final_score, 1)
-    except Exception as e:
-        logger.error(f"Dynamic safety evaluation calculation exception: {e}")
-        return 100.0
-
-def get_remote_cache_key(url: str) -> str:
-    try:
-        resp = requests.head(url, timeout=10, allow_redirects=True)
-        tag = resp.headers.get("ETag") or resp.headers.get("Last-Modified")
-        if tag: return tag
-    except requests.RequestException:
-        pass
-    return str(int(time.time() // CACHE_TTL_SECONDS))
-
-@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def fetch_workbook_bytes(url: str, cache_key: str) -> bytes:
     resp = requests.get(url, timeout=25)
     resp.raise_for_status()
     return resp.content
-
-@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def load_all_sheets_raw(file_bytes: bytes) -> dict:
-    sheets = pd.read_excel(BytesIO(file_bytes), sheet_name=None, engine="openpyxl")
-    cleaned = {}
-    for name, df in sheets.items():
-        if df is None or df.empty: continue
-        cleaned[name] = df.dropna(axis=0, how="all")
-    return cleaned
 
 def inject_portal_design_language():
     p = PAL
@@ -186,52 +140,8 @@ def inject_portal_design_language():
     </style>
     """, unsafe_allow_html=True)
 
-def render_sidebar():
-    with st.sidebar:
-        st.markdown(f"""
-            <div class="sb-brand">
-                <div class="sb-logo-chip">{config.SIDEBAR_LOGO_TEXT}</div>
-                <div>
-                    <div class="sb-brand-name">{config.COMPANY_NAME}</div>
-                    <div class="sb-brand-sub">{config.DASHBOARD_TITLE_SUB}</div>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-        st.markdown('<div class="sb-section-title">🗂 Portal Navigation</div>', unsafe_allow_html=True)
-        status_placeholder = st.empty()
-    return status_placeholder
-
-def render_kpi_card_layout(metric_name, value, prev_value, unit):
-    display_val = fmt_number(value)
-    pill_class, arrow, delta_str = "flat", "▬", "Stable"
-    if value is not None and prev_value is not None:
-        try:
-            v, p = float(value), float(prev_value)
-            diff = v - p
-            if abs(diff) < 1e-9:
-                pill_class, arrow, delta_str = "flat", "▬", "No variance"
-            elif abs(p) > 1e-9:
-                pct = (diff / abs(p)) * 100
-                arrow = "▲" if diff > 0 else "▼"
-                is_bad_metric = any(k in metric_name.lower() for k in ["waste", "accident", "injury", "fatality", "diesel"])
-                pill_class = "good" if (diff <= 0 if is_bad_metric else diff > 0) else "bad"
-                delta_str = f"{arrow} {abs(pct):.1f}%"
-        except (ValueError, TypeError):
-            pass
-
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div>
-            <div class="kpi-top-row">
-                <div class="kpi-icon-badge">{safe_icon_for_dynamic(metric_name)}</div>
-                <div class="kpi-trend-pill {pill_class}">{delta_str}</div>
-            </div>
-            <div class="kpi-value">{display_val} <span style="font-size:12px; font-weight:500; color:var(--text-mid);">{unit}</span></div>
-            <div class="kpi-card-label" style="font-size:12px; font-weight:500; color:var(--text-mid); margin-top:4px; text-transform:capitalize; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{metric_name}</div>
-        </div>
-        <div class="kpi-compare" style="margin-top:4px; font-size:11px; color:var(--text-lo); border-top:1px solid var(--surface-alt); padding-top:6px;">vs previous period: <b>{fmt_number(prev_value)}</b></div>
-    </div>
-    """, unsafe_allow_html=True)
+def render_kpi_grid_layout(metric_name, value, prev_value, unit):
+    render_kpi_card_layout(metric_name, value, prev_value, unit)
 
 def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics: list, selected_month: str, previous_month: str, units_registry: dict):
     from charts.env_visuals import (
@@ -246,7 +156,6 @@ def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics
     df_page_long = df_long[df_long["Category"] == page_key]
     df_month = df_page_long[df_page_long["Month"] == selected_month]
     
-    # Subsections dynamic discovery split pass
     distinct_subcategories = df_page_long["Subcategory"].unique().tolist()
     
     for sub_cat in distinct_subcategories:
@@ -288,7 +197,6 @@ def render_metadata_page_view(page_key: str, df_long: pd.DataFrame, page_metrics
         st.dataframe(df_table_out, use_container_width=True, height=280)
         csv_buffer = df_table_out.to_csv(index=False).encode('utf-8')
         st.download_button("📥 Export Current Segment Frame to CSV Format", data=csv_buffer, file_name=f"{page_key}_segment_normalized_export.csv", mime="text/csv")
-
 
 def main():
     inject_portal_design_language()
@@ -360,8 +268,8 @@ def main():
         kpi_dict_payload[m.lower().strip()] = m_subset.set_index("Month")["Value"].to_dict()
 
     stable_payload_hash = _stable_kpi_hash(kpi_dict_payload)
-    derivatives = compute_portal_derivatives(
-        stable_payload_hash, kpi_dict_payload, tuple(timeline_periods), selected_month, compute_hse_score_dynamic
+    derivatives = compute_kpi_derivatives(
+        stable_payload_hash, kpi_dict_payload, compute_hse_score_dynamic, tuple(timeline_periods), selected_month
     )
 
     current_date_str = datetime.now().strftime("%A, %d %B %Y")
@@ -399,13 +307,13 @@ def main():
             else:
                 total_prod_sum = 0.0
                 prod_unit = "t"
-            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary-2);"><div class="kpi-top-row"><div class="kpi-icon-badge">🏭</div><div class="kpi-trend-pill flat">Production Output</div></div><div class="kpi-value">{fmt_number(total_prod_sum)} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">{prod_unit}</span></div><div class="kpi-label">Aggregated Industrial Production Volume Summation</div><div class="kpi-compare">Consolidated current month output pass</div></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid var(--primary-2);"><div class="kpi-top-row"><div class="kpi-icon-badge">🏭</div><div class="kpi-trend-pill flat">Production Output</div></div><div class="kpi-value">{fmt_number(total_prod_sum)} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">{prod_unit}</span></div><div class="kpi-label">Aggregated Production Volume Output Summation</div><div class="kpi-compare">Consolidated current month output pass</div></div>""", unsafe_allow_html=True)
         with c3:
             total_alerts_count = len(derivatives.get("anomalies", []))
             pill_col = "var(--success)" if total_alerts_count == 0 else "var(--warning)"
             st.markdown(f"""<div class="kpi-card" style="border-top: 3px solid {pill_col};"><div class="kpi-top-row"><div class="kpi-icon-badge">🔔</div><div class="kpi-trend-pill flat">Alert Matrix</div></div><div class="kpi-value" style="color:{pill_col};">{total_alerts_count} <span style="font-size:12px; font-weight:500; color:var(--text-lo);">Active Flags</span></div><div class="kpi-label">Exception Anomaly Variance Notifications</div><div class="kpi-compare">Scaled relative to boundary deviations</div></div>""", unsafe_allow_html=True)
 
-        render_risk_panel_dynamic(kpi_dict_payload, selected_month, timeline_periods, derivatives, units_registry)
+        render_risk_panel(kpi_dict_payload, selected_month, timeline_periods, timeline_periods, {}, derivatives)
         
         st.markdown('<div class="section-label">Unified Structural Domain Section Synopses</div>', unsafe_allow_html=True)
         df_global_month_mask = df_long[df_long["Month"] == selected_month]
@@ -426,14 +334,13 @@ def main():
                 st.markdown(f'<div class="stat-mini"><span class="stat-label">{r["Metric"][:35]}</span><span class="stat-value">{fmt_number(r["Value"])} {r["Unit"]}</span></div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
             
-        render_audit_log_portal(fetch_meta, selected_month)
+        render_audit_log(fetch_meta, config.CURRENT_FISCAL_YEAR, selected_month)
 
     else:
         if selected_page in catalog:
             render_metadata_page_view(selected_page, df_long, catalog[selected_page], selected_month, previous_month, units_registry)
         else:
             st.info("No active operational context items mapped under this category module.")
-
 
 if __name__ == "__main__":
     main()
