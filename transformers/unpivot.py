@@ -53,10 +53,6 @@ def melt_wide_sheet_to_long_cached(df_raw: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(ttl=config.RAW_FILE_CACHE_TTL_SECONDS, show_spinner=False)
 def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
-    """
-    Metadata-driven discovery engine. Infers sections, units, metric names,
-    and groupings directly from the sheet structural topologies.
-    """
     unified_records = []
     units_registry = {}
     metric_catalog = {}
@@ -91,7 +87,6 @@ def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
             primary_cat = text_values[0] if len(text_values) > 1 else sheet_name
             sub_cat = text_values[1] if len(text_values) > 2 else "General Operations"
             
-            # Metadata-driven topic page assignment rules based on structural taxonomy inference
             inferred_page = "Executive Overview"
             m_lower = metric_name.lower()
             s_lower = sheet_name.lower()
@@ -133,8 +128,6 @@ def infer_and_melt_workbook_metadata(sheets_dict: dict) -> dict:
                 
     df_long = pd.DataFrame(unified_records)
     all_periods = sorted(df_long["Period"].unique().tolist(), key=lambda x: ("2026" in x, x))
-    
-    # Cast sets back into structured sorted catalogs
     structured_catalog = {k: sorted(list(v)) for k, v in metric_catalog.items()}
     
     return {
